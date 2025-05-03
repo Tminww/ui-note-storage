@@ -1,0 +1,28 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "Node",
+        "strict": true,
+        "jsx": "preserve",
+        "esModuleInterop": true,
+        "allowJs": true,
+        "noEmit": true,
+        "allowImportingTsExtensions": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "strictNullChecks": true,
+        "noImplicitAny": true,
+        "noImplicitThis": true,
+        "resolveJsonModule": true,
+        "outDir": "./dist/types",
+        "declaration": true,
+        "emitDeclarationOnly": false,
+        "baseUrl": ".",
+        "paths": {
+            "@/*": ["src/*"]
+        }
+    },
+    "include": ["src/*", "vite-env.d.ts", "shims-vue.d.ts"],
+    "exclude": ["node_modules", "./dist/**/*"]
+}
