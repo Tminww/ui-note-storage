@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent, computed, watch, ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const iconNames = [
     'close',
@@ -11,7 +11,12 @@ const iconNames = [
     'trash-can-outline',
     'file-document-outline',
     'folder-outline',
-    'folder-open-outline'
+    'folder-open-outline',
+    'chevron-down',
+    'chevron-up',
+    'chevron-right',
+    'pencil',
+    'chevron-left'
 ] as const
 
 type ValidIconNames = (typeof iconNames)[number]
@@ -21,14 +26,30 @@ const props = defineProps<{
     color?: string
 }>()
 
-// Загружаем иконку асинхронно с учетом текущего имени
-const getIcon = computed(() => {
-    console.log('getIcon', props.name)
-    return defineAsyncComponent({
-        loader: () => import(`@/assets/icons/${props.name}.svg`),
-        suspensible: true
-    })
-})
+// Создаем реактивную ссылку для хранения компонента SVG
+const svgComponent = ref(null)
+
+// Функция для загрузки компонента SVG
+const loadSvgComponent = async (iconName: ValidIconNames) => {
+    try {
+        const module = await import(`@/assets/icons/${iconName}.svg`)
+        svgComponent.value = module.default || module
+    } catch (error) {
+        console.error(`Ошибка загрузки иконки ${iconName}:`, error)
+        svgComponent.value = null
+    }
+}
+
+// Загружаем SVG при первоначальной загрузке
+loadSvgComponent(props.name)
+
+// Следим за изменениями свойства name и перезагружаем SVG
+watch(
+    () => props.name,
+    (newName) => {
+        loadSvgComponent(newName)
+    }
+)
 
 // Преобразуем числа в строку с "px"
 const iconWidth = computed(() =>
@@ -40,9 +61,8 @@ const iconHeight = computed(() =>
 </script>
 
 <template>
-    <!-- Добавляем key для принудительного пересоздания компонента при изменении name -->
     <div class="svg-icon" :style="{ color: props.color || 'currentColor' }">
-        <component :is="getIcon" :key="props.name" :width="iconWidth" :height="iconHeight" />
+        <component v-if="svgComponent" :is="svgComponent" :width="iconWidth" :height="iconHeight" />
     </div>
 </template>
 

@@ -1,10 +1,12 @@
 <template>
     <div class="container">
-        <SidebarComponent class="column left-column"> </SidebarComponent>
+        <!-- <SidebarComponent class="column left-column"> </SidebarComponent> -->
+        <TreeListWidget class="column left-column" />
 
-        <NotesListComponent class="column center-column"> </NotesListComponent>
+        <!-- <NotesListComponent class="column center-column"> </NotesListComponent> -->
         <!-- <div class="column right-column"></div> -->
         <NoteEditorComponent class="column right-column"></NoteEditorComponent>
+        <!-- <MarkdpwnEditor class="column right-column"></MarkdpwnEditor> -->
     </div>
 </template>
 
@@ -12,6 +14,7 @@
 import SidebarComponent from './components/Sidebar.vue'
 import NotesListComponent from './components/NotesList.vue'
 import NoteEditorComponent from './components/NoteEditor.vue'
+import TreeListWidget from './components/TreeListWidget.vue'
 </script>
 
 <style scoped>
@@ -30,7 +33,7 @@ import NoteEditorComponent from './components/NoteEditor.vue'
 }
 
 .left-column {
-    min-width: 250px;
+    min-width: 450px;
     background-color: #f1f5f9;
     border-right: 1px solid #e2e8f0;
 }

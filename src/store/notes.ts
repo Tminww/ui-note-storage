@@ -39,13 +39,14 @@ export const useNotesStore = defineStore('notes', () => {
         activeNote.value = note
     }
 
-    function addFolder(name: string) {
+    function addFolder(name: string): Folder {
         const newFolder: Folder = {
             id: `folder_${Date.now()}`,
             name,
             createdAt: new Date()
         }
         folders.value.push(newFolder)
+        return newFolder
     }
 
     function deleteFolder(id: string) {
