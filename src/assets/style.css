@@ -23,43 +23,55 @@
     font-family: 'Nunito', sans-serif;
     line-height: 1.5;
     font-weight: 400;
-    margin: 0;
-    padding: 0;
-
     color-scheme: light dark;
-    color: rgba(255, 255, 255, 0.87);
-    background-color: #f8fcff;
-
+    background-color: #ffffff;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
+
+* {
+    margin: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100vh;
+    overflow: hidden;
+}
+
 body {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--blue);
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: space-between;
     font-size: 1em;
 }
 
-h1 {
-    font-size: 7.5em;
-    margin: 15px 0px;
-    font-weight: bold;
-}
-h2 {
-    font-weight: bold;
-}
-
-.custom-tooltip {
-    padding: 10px;
-    background: rgba(230, 229, 229, 0.2);
-    z-index: 99999;
-    word-break: break-word;
-    max-width: 250px;
-    white-space: normal;
+html,
+body,
+#app {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
 }
 
-.custom-tooltip__count {
-    font-weight: bold;
+.btn-with-icon {
+    cursor: pointer;
+    background-color: transparent;
+    border: 0px;
+    padding: 0;
 }
+/* .btn-with-icon:hover {
+    background-color: rgb(219, 234, 254);
+
+    border-radius: 0.375rem;
+} */
+
+
+/* * {
+    border: 1px solid black;
+} */
