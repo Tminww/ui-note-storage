@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { shallowRef, computed, watch } from 'vue'
+import { markRaw } from 'vue'
 
 const iconNames = [
     'close',
@@ -26,24 +27,25 @@ const props = defineProps<{
     color?: string
 }>()
 
-// Создаем реактивную ссылку для хранения компонента SVG
-const svgComponent = ref(null)
+// Use shallowRef instead of ref for external components
+const svgComponent = shallowRef(null)
 
-// Функция для загрузки компонента SVG
+// Function to load SVG component
 const loadSvgComponent = async (iconName: ValidIconNames) => {
     try {
         const module = await import(`@/assets/icons/${iconName}.svg`)
-        svgComponent.value = module.default || module
+        // Use markRaw to prevent the component from becoming reactive
+        svgComponent.value = markRaw(module.default || module)
     } catch (error) {
-        console.error(`Ошибка загрузки иконки ${iconName}:`, error)
+        console.error(`Error loading icon ${iconName}:`, error)
         svgComponent.value = null
     }
 }
 
-// Загружаем SVG при первоначальной загрузке
+// Load SVG on initial load
 loadSvgComponent(props.name)
 
-// Следим за изменениями свойства name и перезагружаем SVG
+// Watch for name property changes and reload SVG
 watch(
     () => props.name,
     (newName) => {
@@ -51,7 +53,7 @@ watch(
     }
 )
 
-// Преобразуем числа в строку с "px"
+// Convert numbers to string with "px"
 const iconWidth = computed(() =>
     typeof props.size === 'number' ? `${props.size}px` : props.size || '24px'
 )

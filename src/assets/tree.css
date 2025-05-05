@@ -12,7 +12,7 @@
 }
 
 .tree-container {
-    background-color: #f8fafc;
+    background-color: #f1f5f9;
     border-radius: 8px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     height: 100%;
@@ -47,7 +47,7 @@
     padding: 8px 0;
 }
 
-.empty-tree-message{
+.empty-tree-message {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -65,7 +65,7 @@
     text-align: center;
 }
 
-.empty-tree-text{
+.empty-tree-text {
     margin-bottom: 16px;
     font-size: 14px;
 }
@@ -327,4 +327,3 @@
 .delete-button:hover {
     background-color: #dc2626;
 }
-

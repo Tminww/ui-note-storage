@@ -16,6 +16,15 @@ export interface Note {
     updatedAt: Date
 }
 
+const defaultNote = {
+    id: '',
+    folderId: '',
+    title: '',
+    content: '',
+    createdAt: new Date(),
+    updatedAt: new Date()
+}
+
 export const useNotesStore = defineStore('notes', () => {
     const folders = ref<Folder[]>([{ id: 'default', name: 'Все заметки', createdAt: new Date() }])
 
@@ -85,7 +94,10 @@ export const useNotesStore = defineStore('notes', () => {
     }
 
     function updateNote(id: string, title: string, content: string) {
+        console.log(id, title, content)
         const index = notes.value.findIndex((note) => note.id === id)
+        console.log(notes)
+        console.log(index)
         if (index !== -1) {
             const updatedNote = {
                 ...notes.value[index],
@@ -97,6 +109,7 @@ export const useNotesStore = defineStore('notes', () => {
 
             if (activeNote.value?.id === id) {
                 activeNote.value = updatedNote
+                console.log(activeNote.value)
             }
         }
     }

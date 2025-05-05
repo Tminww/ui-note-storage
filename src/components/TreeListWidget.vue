@@ -39,6 +39,7 @@
                         @add="showAddChildDialog"
                         @edit="showEditDialog"
                         @delete="confirmDelete"
+                        @open="openItem"
                     />
                 </div>
             </div>
@@ -177,6 +178,11 @@ import { ref, reactive, computed, watch, nextTick, provide } from 'vue'
 import SvgIcon from './ui/SvgIcon.vue'
 import ModalDialog from './ModalDialog.vue'
 import TreeNode from './TreeNode.vue'
+
+// Определяем события компонента
+const emit = defineEmits<{
+    (e: 'openNote', note: TreeItem): void
+}>()
 
 // Типы данных
 interface TreeItem {
@@ -399,10 +405,23 @@ const selectItem = (item: TreeItem) => {
     activeItemId.value = item.id
 }
 
+const openItem = (item: TreeItem) => {
+    // Если это заметка, мы открываем её в редакторе
+    if (item.type === 'note') {
+        // Здесь можно добавить код для открытия заметки в редакторе
+        // Например, отправить событие или использовать глобальную шину событий
+        selectItem(item)
+
+        // Если есть интеграция с notesStore:
+        if (item.content !== undefined) {
+            // Эмитировать событие открытия заметки для родительского компонента
+            emit('openNote', item)
+        }
+    }
+}
+
 const toggleItem = (item: TreeItem) => {
-    console.log(item)
     expandedItems[item.id] = !expandedItems[item.id]
-    console.log(expandedItems[item.id])
 }
 
 // Наблюдатели за открытием диалогов для фокуса на полях ввода

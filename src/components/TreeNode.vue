@@ -8,6 +8,7 @@
                 'note-node': item.type === 'note'
             }"
             @click="handleSelect"
+            @dblclick="handleDoubleClick"
         >
             <div class="tree-node-info">
                 <!-- Toggle button shown only for folders -->
@@ -61,20 +62,26 @@
 
         <!-- Children container with transition -->
         <Transition name="fade" mode="out-in">
-            <div v-if="isExpanded && children.length > 0" class="children-container">
-                <TreeNode
-                    v-for="child in children"
-                    :key="child.id"
-                    :item="child"
-                    :children="getGrandchildren(child.id)"
-                    :level="level + 1"
-                    :active-id="activeId"
-                    @select="(childId) => $emit('select', childId)"
-                    @toggle="(childId) => $emit('toggle', childId)"
-                    @add="(childId) => $emit('add', childId)"
-                    @edit="(childId) => $emit('edit', childId)"
-                    @delete="(childId) => $emit('delete', childId)"
-                />
+            <div v-if="isExpanded" class="children-container">
+                <div v-if="children.length > 0">
+                    <TreeNode
+                        v-for="child in children"
+                        :key="child.id"
+                        :item="child"
+                        :children="getGrandchildren(child.id)"
+                        :level="level + 1"
+                        :active-id="activeId"
+                        @select="(childId) => $emit('select', childId)"
+                        @toggle="(childId) => $emit('toggle', childId)"
+                        @add="(childId) => $emit('add', childId)"
+                        @edit="(childId) => $emit('edit', childId)"
+                        @delete="(childId) => $emit('delete', childId)"
+                        @open="(childId) => $emit('open', childId)"
+                    />
+                </div>
+                <div v-else class="empty-folder-message">
+                    <span class="empty-folder-text">Нет файлов</span>
+                </div>
             </div>
         </Transition>
     </div>
@@ -109,6 +116,7 @@ const emit = defineEmits<{
     (e: 'add', item: TreeItem): void
     (e: 'edit', item: TreeItem): void
     (e: 'delete', item: TreeItem): void
+    (e: 'open', item: TreeItem): void
 }>()
 
 // Инжектируем функцию для получения дочерних элементов и статус развернутых элементов
@@ -127,6 +135,16 @@ const getGrandchildren = (parentId: string) => {
 
 const handleSelect = () => {
     emit('select', props.item)
+}
+
+const handleDoubleClick = () => {
+    if (props.item.type === 'folder') {
+        // Для папок переключаем состояние раскрытия
+        emit('toggle', props.item)
+    } else if (props.item.type === 'note') {
+        // Для заметок отправляем событие открытия
+        emit('open', props.item)
+    }
 }
 
 const handleToggle = () => {
@@ -153,7 +171,29 @@ const handleDelete = () => {
     position: relative;
 }
 
+/* Добавляем вертикальные линии */
+.tree-node:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    top: 24px; /* Высота заголовка */
+    left: 8px;
+    width: 1px;
+    height: calc(100% - 24px);
+    background-color: #cbd5e1;
+}
+
+/* Линия, соединяющая с родителем */
+.tree-node-header::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: -8px;
+    width: 8px;
+    height: 1px;
+    background-color: #cbd5e1;
+}
 .tree-node-header {
+    position: relative;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -221,29 +261,25 @@ const handleDelete = () => {
 }
 
 .children-container {
+    position: relative;
+    margin-left: 16px;
+    padding-left: 8px; /* Отступ для вертикальной линии */
+}
+/* Анимации */
+
+.children-container {
     margin-left: 16px;
 }
 
-/* Анимации */
-.fade-enter-active,
-.fade-leave-active {
-    transition: opacity 0.2s ease;
+.empty-folder-message {
+    padding: 6px 8px;
+    margin-left: 16px;
+    color: #94a3b8;
+    font-style: italic;
+    font-size: 0.9rem;
 }
 
-.fade-enter-from,
-.fade-leave-to {
-    opacity: 0;
-}
-
-.expand-enter-active,
-.expand-leave-active {
-    transition: all 0.3s ease;
-    overflow: hidden;
-}
-
-.expand-enter-from,
-.expand-leave-to {
-    opacity: 0;
-    max-height: 0;
+.empty-folder-text {
+    margin-left: 6px;
 }
 </style>

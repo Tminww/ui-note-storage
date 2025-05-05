@@ -1,54 +1,53 @@
 <template>
-    <div class="container">
-        <!-- <SidebarComponent class="column left-column"> </SidebarComponent> -->
-        <TreeListWidget class="column left-column" />
-
-        <!-- <NotesListComponent class="column center-column"> </NotesListComponent> -->
-        <!-- <div class="column right-column"></div> -->
-        <NoteEditorComponent class="column right-column"></NoteEditorComponent>
-        <!-- <MarkdpwnEditor class="column right-column"></MarkdpwnEditor> -->
+    <div class="notes-app">
+        <TreeListWidget class="sidebar" @openNote="handleOpenNote($event as Note)" />
+        <div class="content">
+            <NoteEditor class="note-editor" />
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
-import SidebarComponent from './components/Sidebar.vue'
-import NotesListComponent from './components/NotesList.vue'
-import NoteEditorComponent from './components/NoteEditor.vue'
+import { useNotesStore } from './store/notes'
 import TreeListWidget from './components/TreeListWidget.vue'
+import NoteEditor from './components/NoteEditor.vue'
+import type { Note } from './types'
+
+const notesStore = useNotesStore()
+
+// Обработчик открытия заметки при двойном клике
+function handleOpenNote(note: Note) {
+    // Используем notesStore для установки активной заметки
+    notesStore.setActiveNote({
+        id: note.id,
+        folderId: note.parentId || '',
+        title: note.name,
+        content: note.content || '',
+        createdAt: note.updatedAt || new Date(),
+        updatedAt: note.updatedAt || new Date()
+    })
+}
 </script>
 
 <style scoped>
-.container {
+.notes-app {
     display: flex;
-    flex-direction: row;
-    width: 100%;
     height: 100vh;
     overflow: hidden;
 }
 
-.column {
-    height: 100%;
-    position: relative;
-    min-width: 100px; /* Минимальная ширина столбца */
+.sidebar {
+    width: 350px;
+    border-right: 1px solid rgb(226, 232, 240);
+    overflow-y: auto;
 }
 
-.left-column {
-    min-width: 450px;
-    background-color: #f1f5f9;
-    border-right: 1px solid #e2e8f0;
-}
-
-.center-column {
-    min-width: 250px;
-
-    border-color: #e2e8f0;
-    border-right: 1px solid #e2e8f0;
-}
-
-.right-column {
+.content {
     flex: 1;
-    min-width: 250px;
-
-    background-color: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
+
+/* Убираем .note-editor, так как применяем стили на уровне компонента */
 </style>
