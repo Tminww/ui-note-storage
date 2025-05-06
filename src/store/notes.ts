@@ -30,7 +30,7 @@ export const useNotesStore = defineStore('notes', () => {
 
     const notes = ref<Note[]>([])
     const activeFolder = ref<Folder | null>(folders.value[0])
-    const activeNote = ref<Note | null>(null)
+    const activeNote = ref<Note | null>(defaultNote)
 
     const filteredNotes = computed(() => {
         if (!activeFolder.value) return []
