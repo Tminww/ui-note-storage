@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Thoughts",
+    "slug": "thoughts-ai-inbox",
+    "scheme": "thoughts",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F6F7FB",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "dev.thoughts.miniapp",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "name": "Thoughts — AI Inbox",
+      "bundler": "metro"
+    },
+    "plugins": [
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Разрешите доступ к микрофону для записи мыслей голосом.",
+          "speechRecognitionPermission": "Разрешите распознавание речи для перевода голосовых мыслей в текст."
+        }
+      ]
+    ]
+  }
+}
