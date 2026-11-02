@@ -1,0 +1,41 @@
+name: Publish Thoughts EAS Update
+
+on:
+  push:
+    branches: [thoughts-ai-inbox-mvp]
+    paths:
+      - 'thoughts-mvp/apps/mobile/**'
+      - '.github/workflows/publish-thoughts-eas-update.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-update:
+    # Repository variable EXPO_EAS_PROJECT_ID must be configured by the Expo project owner.
+    if: ${{ vars.EXPO_EAS_PROJECT_ID != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: thoughts-mvp/apps/mobile
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_EAS_PROJECT_ID: ${{ vars.EXPO_EAS_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate Expo credentials
+        run: |
+          test -n "$EXPO_TOKEN" || { echo "Missing EXPO_TOKEN GitHub Actions secret"; exit 1; }
+          test -n "$EXPO_EAS_PROJECT_ID" || { echo "Missing EXPO_EAS_PROJECT_ID repository variable"; exit 1; }
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+        working-directory: thoughts-mvp
+      - name: Check types
+        run: npm run typecheck
+      - name: Publish preview OTA update
+        run: npx --yes eas-cli@latest update --branch preview --message "GitHub ${{ github.sha }}" --non-interactive
