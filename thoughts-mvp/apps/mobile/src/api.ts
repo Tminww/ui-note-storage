@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {getStorageMode} from './deviceConfig';
+import {notionStorage} from './notionStorage';
 export type Category = 'idea' | 'task' | 'bug' | 'research' | 'note';
 export type ThoughtStatus = 'pending' | 'processing' | 'ready' | 'needs_review';
 export type Project = {
@@ -42,7 +44,6 @@ export async function saveApiUrl(url: string): Promise<string> {
   return API_URL;
 }
 
-
 export async function request<T>(endpoint: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -57,7 +58,7 @@ export async function request<T>(endpoint: string, init?: RequestInit): Promise<
   if (!response.ok) throw new Error(data.error || `Ошибка API: ${response.status}`);
   return data as T;
 }
-export const api = {
+const serverApi = {
   projects: () => request<Project[]>('/projects'),
   createProject: (body: { name:string; description:string; color:string }) => request<Project>('/projects', {method:'POST',body:JSON.stringify(body)}),
   updateProject: (id:string, body: Partial<Project>) => request<Project>(`/projects/${id}`, {method:'PATCH',body:JSON.stringify(body)}),
@@ -71,3 +72,11 @@ export const api = {
   config: () => request<AIConfig>('/config'),
   saveSettings: (body:Settings) => request<Settings>('/settings', {method:'PATCH',body:JSON.stringify(body)})
 };
+
+// Storage adapter boundary: switching to Notion skips the entire Thoughts backend.
+export const api:typeof serverApi=Object.fromEntries(Object.entries(serverApi).map(([key,fn])=>[
+  key,(...args:unknown[])=>{
+    const active:any=getStorageMode()==='notion'?notionStorage:serverApi;
+    return active[key](...args);
+  }
+])) as typeof serverApi;

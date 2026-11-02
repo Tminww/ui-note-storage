@@ -8,6 +8,9 @@ import {
 } from 'react-native';
 import { api, getApiUrl, loadApiUrl, saveApiUrl, type AIConfig, type Category, type Project, type Settings, type Thought } from './src/api';
 import { useVoiceInput } from './src/useVoiceInput';
+import * as Updates from 'expo-updates';
+import { getStorageMode, initializeDeviceConfig, setStorageMode, getNotionRoot, setNotionRoot, hasSecret, saveSecret, type StorageMode } from './src/deviceConfig';
+import { connectNotionMcp, notionMcpDisconnect, notionMcpIsConnected } from './src/notionMcp';
 
 type Page = 'inbox' | 'projects' | 'settings';
 type Selected = 'all' | 'inbox' | string;
@@ -73,6 +76,14 @@ export default function App() {
   const [error,setError] = useState('');
   const [notice,setNotice] = useState('');
   const [apiUrlInput,setApiUrlInput] = useState(getApiUrl());
+  const [storageModeState,setStorageModeState] = useState<StorageMode>('server');
+  const [rootInput,setRootInput] = useState('');
+  const [notionToken,setNotionToken] = useState('');
+  const [routerToken,setRouterToken] = useState('');
+  const [notionHasToken,setNotionHasToken] = useState(false);
+  const [routerHasToken,setRouterHasToken] = useState(false);
+  const [mcpConnected,setMcpConnected] = useState(false);
+  const [updateStatus,setUpdateStatus] = useState('');
   const [draft,setDraft] = useState('');
   const voice = useVoiceInput(setDraft);
   const [draftProject,setDraftProject] = useState<string|null>(null);
@@ -98,8 +109,41 @@ export default function App() {
     finally { setLoading(false); }
   }, []);
   useEffect(()=>{
-    void loadApiUrl().then(url=>{setApiUrlInput(url);return refresh();});
+    void Promise.all([initializeDeviceConfig(),loadApiUrl()]).then(async ([,url])=>{
+      setStorageModeState(getStorageMode());setRootInput(getNotionRoot());setApiUrlInput(url);
+      setNotionHasToken(await hasSecret('notion'));setRouterHasToken(await hasSecret('openrouter'));
+      setMcpConnected(await notionMcpIsConnected());
+      if(getStorageMode()==='notion'&&!(await hasSecret('notion'))){setPage('settings');setLoading(false);return;}
+      return refresh();
+    }).catch(e=>{setError((e as Error).message);setLoading(false);});
   },[refresh]);
+  const switchMode=(mode:StorageMode)=>void (async()=>{
+    try{await setStorageMode(mode);setStorageModeState(mode);setPage('settings');setSelected('all');setLoading(true);await refresh();}
+    catch(e){setError((e as Error).message);setLoading(false);}
+  })();
+  const saveNotionConfig=()=>void (async()=>{
+    try{
+      await setNotionRoot(rootInput);
+      if(notionToken.trim())await saveSecret('notion',notionToken);
+      if(routerToken.trim())await saveSecret('openrouter',routerToken);
+      setNotionToken('');setRouterToken('');
+      setNotionHasToken(await hasSecret('notion'));setRouterHasToken(await hasSecret('openrouter'));
+      setNotice('Настройки сохранены только на устройстве');
+      setLoading(true);await refresh();
+    }catch(e){setError((e as Error).message);setLoading(false);}
+  })();
+  const connectMcp=()=>void (async()=>{
+    setBusy(true);setError('');
+    try{await connectNotionMcp();setMcpConnected(true);setNotice('Notion MCP подключён по OAuth');}
+    catch(e){setError((e as Error).message);}finally{setBusy(false);}
+  })();
+  const checkUpdates=()=>void (async()=>{
+    if(!Updates.isEnabled){setUpdateStatus('EAS Update не настроен. Нужен EXPO_EAS_PROJECT_ID и новый APK.');return;}
+    try{setUpdateStatus('Проверка обновлений…');const result=await Updates.checkForUpdateAsync();
+      if(!result.isAvailable){setUpdateStatus('Установлена актуальная версия');return;}
+      setUpdateStatus('Скачивание обновления…');await Updates.fetchUpdateAsync();setUpdateStatus('Обновление загружено. Перезапуск…');await Updates.reloadAsync();
+    }catch(e){setUpdateStatus('Ошибка обновления: '+(e as Error).message);}
+  })();
   const updateServer = () => {
     void (async () => {
       try {
@@ -192,7 +236,7 @@ export default function App() {
     </View>
     <View style={{flex:1}}/>
     <Pressable onPress={()=>setPage('settings')} style={[styles.navItem,page==='settings'&&styles.navSelected]}><Text style={styles.navIcon}>⚙</Text><Text style={styles.navLabel}>Настройки AI</Text></Pressable>
-    <View style={styles.sideFooter}><Text style={styles.sideFooterText}>SQLite • OpenRouter • Expo</Text><Text style={styles.sideFooterSmall}>MVP v0.1</Text></View>
+    <View style={styles.sideFooter}><Text style={styles.sideFooterText}>{storageModeState==='notion'?'Notion • OpenRouter • Expo':'SQLite • OpenRouter • Expo'}</Text><Text style={styles.sideFooterSmall}>MVP v0.1</Text></View>
   </View>;
 
   const topMobile=()=><View style={styles.mobileHeader}>
@@ -272,12 +316,39 @@ export default function App() {
     <Text style={styles.eyebrow}>КОНФИГУРАЦИЯ</Text>
     <SectionHeading title="Настройки AI" caption="Модели можно менять без правок в мобильном приложении."/>
     <View style={styles.settingsCard}>
+      <Text style={styles.settingsTitle}>Где хранить мысли?</Text>
+      <Text style={styles.muted}>Можно переключаться между собственным backend и Notion. Данные автоматически не мигрируют.</Text>
+      <View style={styles.chipWrap}>
+        <Chip selected={storageModeState==='server'} onPress={()=>switchMode('server')}>SQLite / сервер</Chip>
+        <Chip selected={storageModeState==='notion'} onPress={()=>switchMode('notion')}>Notion / без backend</Chip>
+      </View>
+    </View>
+    {storageModeState==='server'?<View style={styles.settingsCard}>
       <Text style={styles.settingsTitle}>Сервер Thoughts API</Text>
       <Text style={styles.muted}>Укажи адрес компьютера или сервера, на котором запущен backend. Телефон должен иметь к нему доступ.</Text>
       <Label>URL сервера</Label>
       <TextInput autoCapitalize="none" autoCorrect={false} keyboardType="url" value={apiUrlInput} onChangeText={setApiUrlInput} style={styles.field} placeholder="http://192.168.1.25:4000"/>
       <Btn onPress={updateServer}>Сохранить адрес сервера</Btn>
-    </View>
+    </View>:<>
+      <View style={styles.settingsCard}>
+        <Text style={styles.settingsTitle}>Notion — хранилище без нашего backend</Text>
+        <Text style={styles.muted}>Создай внутреннюю интеграцию Notion, дай ей доступ к выбранной странице, скопируй токен из Bitwarden и укажи ID этой страницы.</Text>
+        <Label>Страница Notion (ID или URL)</Label>
+        <TextInput autoCapitalize="none" autoCorrect={false} value={rootInput} onChangeText={setRootInput} style={styles.field} placeholder="https://www.notion.so/..."/>
+        <Label>Notion integration token {notionHasToken?'✓ сохранён':''}</Label>
+        <TextInput secureTextEntry autoCapitalize="none" value={notionToken} onChangeText={setNotionToken} style={styles.field} placeholder={notionHasToken?'Оставь пустым, чтобы не менять':'Вставь из Bitwarden'}/>
+        <Label>OpenRouter API key {routerHasToken?'✓ сохранён':''}</Label>
+        <TextInput secureTextEntry autoCapitalize="none" value={routerToken} onChangeText={setRouterToken} style={styles.field} placeholder={routerHasToken?'Оставь пустым, чтобы не менять':'Вставь из Bitwarden'}/>
+        <Text style={styles.muted}>Секреты сохраняются в Android Keystore / iOS Keychain. Веб-режим с личными ключами отключён.</Text>
+        <Btn onPress={saveNotionConfig}>Сохранить на телефоне</Btn>
+      </View>
+      <View style={styles.settingsCard}>
+        <Text style={styles.settingsTitle}>Notion MCP — контекст для AI</Text>
+        <Text style={styles.muted}>Отдельная OAuth-авторизация в Notion MCP. Модель получает только доступ к чтению через ограниченные MCP-инструменты. Создание заметок выполняется самим приложением через Notion API.</Text>
+        <Text style={styles.muted}>Статус: {mcpConnected?'✓ Подключено':'Не подключено'}</Text>
+        {mcpConnected?<Btn kind="outline" onPress={()=>void notionMcpDisconnect().then(()=>setMcpConnected(false))}>Отключить MCP</Btn>:<Btn loading={busy} onPress={connectMcp}>Авторизоваться в Notion MCP</Btn>}
+      </View>
+    </>}
     {settings?<>
       <View style={styles.settingsCard}>
         <Text style={styles.settingsTitle}>✦ Генерация названия и резюме</Text><Text style={styles.muted}>OpenAI-compatible Chat Completions. DeepSeek через OpenRouter — по умолчанию.</Text>
@@ -293,9 +364,15 @@ export default function App() {
         <Label>Порог уверенности: {Math.round(settings.confidenceThreshold*100)}%</Label>
         <View style={styles.chipWrap}>{[.5,.6,.7,.8,.9].map(v=><Chip key={v} selected={settings.confidenceThreshold===v} onPress={()=>setSettings({...settings,confidenceThreshold:v})}>{Math.round(v*100)}%</Chip>)}</View>
       </View>
-      <View style={styles.settingsInfo}><Text style={{color:'#556080',lineHeight:20}}>🔐 API-ключи находятся только на сервере в файле apps/api/.env. Никогда не помещай их в EXPO_PUBLIC_*.</Text></View>
+      <View style={styles.settingsInfo}><Text style={{color:'#556080',lineHeight:20}}>🔐 {storageModeState==='server'?'API-ключи находятся на сервере в apps/api/.env.':'API-ключи сохранены в системном защищённом хранилище телефона. Ни один ключ не встраивается в APK или EAS Update.'}</Text></View>
       <Btn onPress={saveSettings} loading={busy}>Сохранить настройки</Btn>
     </>:null}
+    <View style={styles.settingsCard}>
+      <Text style={styles.settingsTitle}>Обновления приложения (EAS Update)</Text>
+      <Text style={styles.muted}>JS-обновления устанавливаются без нового APK, если приложение привязано к Expo project ID и совместимо с установленной нативной версией.</Text>
+      <Btn kind="outline" onPress={checkUpdates}>Проверить обновления</Btn>
+      {updateStatus?<Text style={styles.muted}>{updateStatus}</Text>:null}
+    </View>
   </View>;
 
   return <View style={styles.app}>
