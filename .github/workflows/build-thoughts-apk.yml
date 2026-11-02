@@ -54,17 +54,7 @@ jobs:
           if [ -z "$EXPO_EAS_PROJECT_ID" ]; then
             echo "::warning::EXPO_EAS_PROJECT_ID is not configured. This APK will NOT receive EAS updates. Set the GitHub variable and rebuild once."
           else
-            node - <<'NODE'
-            const {expo} = require('./apps/mobile/app.config.js');
-            const id = process.env.EXPO_EAS_PROJECT_ID;
-            if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(id) ||
-                expo.updates?.enabled !== true ||
-                expo.updates?.url !== 'https://u.expo.dev/' + id ||
-                expo.updates?.requestHeaders?.['expo-channel-name'] !== 'preview') {
-              throw new Error('Invalid EAS preview project config; refusing to package a misleading APK');
-            }
-            console.log('Building preview-channel OTA-enabled APK');
-            NODE
+            node -e 'const c=require("./apps/mobile/app.config.js").expo; const id=process.env.EXPO_EAS_PROJECT_ID; if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)||c.updates?.enabled!==true||c.updates?.url!=="https://u.expo.dev/"+id||c.updates?.requestHeaders?.["expo-channel-name"]!=="preview"){throw new Error("Invalid EAS preview project config")};console.log("Building preview-channel OTA-enabled APK")'
           fi
       - name: Install dependencies
         run: npm install --no-audit --no-fund
