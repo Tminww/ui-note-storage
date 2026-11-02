@@ -118,7 +118,7 @@ export default function App() {
     }).catch(e=>{setError((e as Error).message);setLoading(false);});
   },[refresh]);
   const switchMode=(mode:StorageMode)=>void (async()=>{
-    try{await setStorageMode(mode);setStorageModeState(mode);setPage('settings');setSelected('all');setLoading(true);await refresh();}
+    try{await setStorageMode(mode);setStorageModeState(mode);setPage('settings');setSelected('all');setProjects([]);setThoughts([]);setSettings(null);setConfig(null);setLoading(true);await refresh();}
     catch(e){setError((e as Error).message);setLoading(false);}
   })();
   const saveNotionConfig=()=>void (async()=>{
