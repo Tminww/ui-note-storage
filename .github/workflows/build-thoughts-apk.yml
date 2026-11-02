@@ -3,8 +3,16 @@ name: Build Thoughts Android APK
 on:
   push:
     branches: [thoughts-ai-inbox-mvp]
+    # JS-only changes are delivered by EAS Update; rebuild APK only for native/config changes.
     paths:
-      - 'thoughts-mvp/**'
+      - 'thoughts-mvp/apps/mobile/app.config.js'
+      - 'thoughts-mvp/apps/mobile/app.json'
+      - 'thoughts-mvp/apps/mobile/eas.json'
+      - 'thoughts-mvp/apps/mobile/package.json'
+      - 'thoughts-mvp/apps/mobile/metro.config.js'
+      - 'thoughts-mvp/apps/mobile/babel.config.js'
+      - 'thoughts-mvp/package.json'
+      - 'thoughts-mvp/package-lock.json'
       - '.github/workflows/build-thoughts-apk.yml'
   workflow_dispatch:
 
@@ -41,6 +49,23 @@ jobs:
             ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
           fi
           echo "$ANDROID_HOME/build-tools/37.0.0" >> "$GITHUB_PATH"
+      - name: Explain OTA status
+        run: |
+          if [ -z "$EXPO_EAS_PROJECT_ID" ]; then
+            echo "::warning::EXPO_EAS_PROJECT_ID is not configured. This APK will NOT receive EAS updates. Set the GitHub variable and rebuild once."
+          else
+            node - <<'NODE'
+            const {expo} = require('./apps/mobile/app.config.js');
+            const id = process.env.EXPO_EAS_PROJECT_ID;
+            if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(id) ||
+                expo.updates?.enabled !== true ||
+                expo.updates?.url !== 'https://u.expo.dev/' + id ||
+                expo.updates?.requestHeaders?.['expo-channel-name'] !== 'preview') {
+              throw new Error('Invalid EAS preview project config; refusing to package a misleading APK');
+            }
+            console.log('Building preview-channel OTA-enabled APK');
+            NODE
+          fi
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Validate types
@@ -70,7 +95,7 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: thoughts-android-apk
+          name: thoughts-android-apk-${{ vars.EXPO_EAS_PROJECT_ID != '' && 'ota-enabled' || 'no-ota' }}
           path: thoughts-mvp/apps/mobile/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
