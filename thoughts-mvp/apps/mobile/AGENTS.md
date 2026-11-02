@@ -46,3 +46,10 @@ Docs: https://docs.expo.dev/eas/index.md
 - gluestack-ui v5 is the UI design library. Read the bundled `thoughts-mvp/.agents/skills/gluestack-ui-v5/SKILL.md` before modifying UI.
 - Separate Notion direct-storage mode from optional SQLite API mode. Never commit user API tokens.
 - EAS Update requires the user's Expo OAuth authorization, Expo project ID and an authenticated GitHub Actions secret. Do not claim activation before these are configured.
+
+## Locally installed official Expo skills
+
+- Before any Expo SDK or EAS task, select the relevant original skill under `thoughts-mvp/.agents/skills/<skill-name>/SKILL.md` (23 official skills are vendored).
+- The current full skill inventory and upstream version are in `thoughts-mvp/.agents/skills/EXPO-SKILLS.md`.
+- Preserve and consult the bundled `references/`, `scripts/`, and `agents/` files. These are copied from upstream, not stub templates.
+- Expo skills are instructions, not an authenticated Expo MCP connection. EAS account actions still require OAuth / appropriate EAS credentials.
