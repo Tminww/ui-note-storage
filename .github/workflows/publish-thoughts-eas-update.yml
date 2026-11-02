@@ -38,4 +38,4 @@ jobs:
       - name: Check types
         run: npm run typecheck
       - name: Publish preview OTA update
-        run: npx --yes eas-cli@latest update --branch preview --message "GitHub ${{ github.sha }}" --non-interactive
+        run: npx --yes eas-cli@latest update --branch preview --environment preview --message "GitHub ${{ github.sha }}" --non-interactive
