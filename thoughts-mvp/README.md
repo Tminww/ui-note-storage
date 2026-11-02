@@ -188,3 +188,48 @@ apps/
 - ✅ Скриншоты демонстрационного интерфейса отрендерены локальным Chromium из `docs/preview.html`.
 - ⚠️ Установка npm-зависимостей и сборка Expo не выполнены в среде подготовки из-за сетевой ошибки DNS `EAI_AGAIN` при обращении к npm. При наличии доступа к npm нужно выполнить `npm install` и `npm run check:mobile`, а затем проверить `npm run web` и реальное распознавание речи.
 - ⚠️ Приложение для локального личного использования, а не публичный сервис: API без авторизации. Не публикуй порт API в интернет.
+
+## Android APK (GitHub Actions)
+
+APK собирается отдельным workflow в **корне репозитория** `.github/workflows/build-thoughts-apk.yml`. Workflow запускается при изменениях `thoughts-mvp/**` в ветке `thoughts-ai-inbox-mvp`. Открой вкладку **Actions → Build Thoughts Android APK**, открой успешный запуск и скачай артефакт **thoughts-android-apk**. Распакуй ZIP, перенеси `.apk` на Android и установи. Включать «неизвестные источники» следует только для файла из доверенного репозитория.
+
+Это **release-APK, подписанный стандартным debug keystore**, который предназначен только для личного тестирования, не для Play Store. В отличие от debug-APK, он содержит встроенный JS-бандл и не требует Metro. Для публичной публикации нужны отдельный release keystore и безопасное хранение ключей подписи.
+
+После установки открой **Настройки AI → Сервер Thoughts API**, введи URL своего backend (например, `http://192.168.1.25:4000`) и сохрани. Для локальной сети разрешён HTTP в Android-манифесте; не открывай незащищённый API в публичный интернет. Сохранение адреса выполняется только на устройстве через AsyncStorage. Микрофон требует разрешения.
+
+**Важно:** backend **не входит** в APK и должен быть запущен отдельно, без публичного доступа. Автосборка требует доступного npm, Android SDK и GitHub Actions.
+
+
+## gluestack-ui v5 — UI-слой
+
+MVP использует **gluestack-ui v5** (`@gluestack-ui/core`,
+`@gluestack-ui/utils`) с **UniWind** и Tailwind CSS v4 для Expo
+Android/iOS/Web. Общие компоненты находятся в
+`apps/mobile/components/ui/`; семантические цвета — в
+`apps/mobile/global.css`. В `App.tsx` уже используются компоненты
+`Button`, `ButtonText`, `ButtonSpinner`, `Card`, `Heading` и другие.
+
+Skill для разработчиков хранится по пути
+`.agents/skills/gluestack-ui-v5/SKILL.md`. Чтобы обновить до полного
+официального набора правил gluestack, выполните в корне проекта:
+
+```bash
+npx skills add gluestack/agent-skills --skill gluestack-ui-v5
+```
+
+В среде подготовки npm/GitHub DNS не работали, поэтому CLI-инсталляция
+здесь не завершилась. В репозиторий включена доступная локальная
+версия инструкции, а полный оригинальный skill доступен по ссылке в нём.
+Зависимости объявлены в `package.json` и будут установлены обычным `npm install`.
+
+## Android APK
+
+GitHub Actions workflow `.github/workflows/build-thoughts-apk.yml`
+собирает Android release APK из Expo приложения. Для запуска откройте
+GitHub Actions → **Build Thoughts Android APK** → **Run workflow**
+на ветке `thoughts-ai-inbox-mvp`, затем скачайте artifact
+`thoughts-android-apk` после успешной сборки.
+
+> APK — это клиент; SQLite находится на сервере. В настройках
+> мобильного приложения нужно указать доступный по сети URL Thoughts API.
+> Адрес `localhost` внутри Android означает сам телефон, а не компьютер.

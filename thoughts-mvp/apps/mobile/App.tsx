@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import './global.css';
+import { Button as GSButton, ButtonText as GSButtonText, ButtonSpinner as GSButtonSpinner } from './components/ui/button';
+import { Card as GSCard, Heading as GSHeading, VStack as GSVStack, Text as GSText } from './components/ui/surfaces';
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressable,
   ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useWindowDimensions
 } from 'react-native';
-import { api, type AIConfig, type Category, type Project, type Settings, type Thought } from './src/api';
+import { api, getApiUrl, loadApiUrl, saveApiUrl, type AIConfig, type Category, type Project, type Settings, type Thought } from './src/api';
 import { useVoiceInput } from './src/useVoiceInput';
 
 type Page = 'inbox' | 'projects' | 'settings';
@@ -30,26 +33,25 @@ function Btn({children,onPress,kind='primary',disabled=false,small=false,loading
   children:React.ReactNode;onPress:()=>void;kind?:'primary'|'ghost'|'outline'|'danger';
   disabled?:boolean;small?:boolean;loading?:boolean
 }) {
-  return <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled || loading}
-    style={({pressed})=>[styles.btn,small&&styles.btnSmall,
-      kind==='primary'?styles.btnPrimary:kind==='outline'?styles.btnOutline:kind==='danger'?styles.btnDanger:styles.btnGhost,
-      (pressed||disabled)&&{opacity:.55}] }>
-    {loading?<ActivityIndicator size="small" color={kind==='primary'?'white':C.purple}/>:<Text style={[styles.btnText,small&&{fontSize:12},kind==='primary'?{color:'white'}:kind==='danger'?{color:C.red}:{color:C.ink}]}>{children}</Text>}
-  </Pressable>;
+  const variant = kind==='primary'?'default':kind==='danger'?'destructive':kind;
+  return <GSButton onPress={onPress} disabled={disabled||loading} variant={variant} size={small?'sm':'default'}>
+    {loading?<GSButtonSpinner variant={variant}/>:<GSButtonText variant={variant} size={small?'sm':'default'}>{children}</GSButtonText>}
+  </GSButton>;
 }
 function Label({children}: {children:React.ReactNode}) {
   return <Text style={styles.fieldLabel}>{children}</Text>;
 }
 function Chip({children,selected,onPress,color}: {children:React.ReactNode;selected?:boolean;onPress:()=>void;color?:string}) {
-  return <Pressable onPress={onPress} accessibilityRole="button" style={[styles.chip,selected&&{borderColor:color||C.purple,backgroundColor:C.pale}]}>
-    <Text style={[styles.chipText,selected&&{color:color||C.purple,fontWeight:'700'}]}>{children}</Text>
-  </Pressable>;
+  return <GSButton onPress={onPress} variant={selected?'secondary':'outline'} size="sm"
+    accessibilityState={{selected:!!selected}} className="rounded-lg">
+    <GSButtonText variant={selected?'secondary':'outline'} size="sm">{children}</GSButtonText>
+  </GSButton>;
 }
 function SectionHeading({title,caption,action}: {title:string;caption?:string;action?:React.ReactNode}) {
-  return <View style={styles.sectionHeading}><View style={{flex:1}}><Text style={styles.h2}>{title}</Text>{caption?<Text style={styles.muted}>{caption}</Text>:null}</View>{action}</View>;
+  return <View style={styles.sectionHeading}><View style={{flex:1}}><GSHeading>{title}</GSHeading>{caption?<Text style={styles.muted}>{caption}</Text>:null}</View>{action}</View>;
 }
 function Empty({icon,title,description}: {icon:string;title:string;description:string}) {
-  return <View style={styles.empty}><Text style={{fontSize:38,marginBottom:12}}>{icon}</Text><Text style={styles.emptyTitle}>{title}</Text><Text style={styles.emptyDesc}>{description}</Text></View>;
+  return <GSVStack className="items-center rounded-2xl border border-dashed border-border bg-card p-8"><GSText className="text-4xl">{icon}</GSText><GSHeading>{title}</GSHeading><GSText className="text-center text-sm text-muted-foreground">{description}</GSText></GSVStack>;
 }
 const confirmAction = (title:string, message:string, yes:()=>void) => {
   if (Platform.OS==='web') {
@@ -70,6 +72,7 @@ export default function App() {
   const [busy,setBusy] = useState(false);
   const [error,setError] = useState('');
   const [notice,setNotice] = useState('');
+  const [apiUrlInput,setApiUrlInput] = useState(getApiUrl());
   const [draft,setDraft] = useState('');
   const voice = useVoiceInput(setDraft);
   const [draftProject,setDraftProject] = useState<string|null>(null);
@@ -94,7 +97,20 @@ export default function App() {
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, []);
-  useEffect(()=>{void refresh();},[refresh]);
+  useEffect(()=>{
+    void loadApiUrl().then(url=>{setApiUrlInput(url);return refresh();});
+  },[refresh]);
+  const updateServer = () => {
+    void (async () => {
+      try {
+        await saveApiUrl(apiUrlInput);
+        setNotice('Адрес сервера сохранён на устройстве');
+        setLoading(true);
+        await refresh();
+      } catch(e) { setError((e as Error).message); }
+      finally { setLoading(false); }
+    })();
+  };
 
   const shownThoughts = useMemo(()=>thoughts.filter(t=>{
     if (selected==='inbox' && t.projectId!==null) return false;
@@ -184,7 +200,7 @@ export default function App() {
     <Pressable onPress={()=>setPage('settings')} style={styles.topSettings}><Text style={{fontSize:19}}>⚙</Text></Pressable>
   </View>;
 
-  const composer=()=><View style={styles.composer}>
+  const composer=()=><GSCard className="border-primary/20 p-5">
     <View style={styles.composerTop}><Text style={{fontWeight:'700',color:C.ink,fontSize:15}}>✦  Новая мысль</Text><Text style={styles.smallMuted}>Напиши или продиктуй на русском</Text></View>
     <TextInput accessibilityLabel="Запиши свою мысль" style={styles.composerInput} multiline editable={!voice.active} placeholder="Напиши идею или нажми 🎙 и скажи её вслух…" placeholderTextColor={C.light} value={draft} onChangeText={setDraft} textAlignVertical="top" maxLength={10000}/>
     <View style={styles.voiceRow}>
@@ -208,7 +224,7 @@ export default function App() {
       </ScrollView>
       <Btn onPress={createThought} disabled={!draft.trim()||busy||voice.active} loading={busy} small>Сохранить ↗</Btn>
     </View>
-  </View>;
+  </GSCard>;
 
   const thoughtCard=(t:Thought)=><Pressable key={t.id} onPress={()=>showEdit(t)} style={({pressed})=>[styles.thoughtCard,pressed&&{opacity:.78}]}>
     <View style={styles.cardTop}>
@@ -255,6 +271,13 @@ export default function App() {
   const settingsPage=()=><View style={styles.pageContent}>
     <Text style={styles.eyebrow}>КОНФИГУРАЦИЯ</Text>
     <SectionHeading title="Настройки AI" caption="Модели можно менять без правок в мобильном приложении."/>
+    <View style={styles.settingsCard}>
+      <Text style={styles.settingsTitle}>Сервер Thoughts API</Text>
+      <Text style={styles.muted}>Укажи адрес компьютера или сервера, на котором запущен backend. Телефон должен иметь к нему доступ.</Text>
+      <Label>URL сервера</Label>
+      <TextInput autoCapitalize="none" autoCorrect={false} keyboardType="url" value={apiUrlInput} onChangeText={setApiUrlInput} style={styles.field} placeholder="http://192.168.1.25:4000"/>
+      <Btn onPress={updateServer}>Сохранить адрес сервера</Btn>
+    </View>
     {settings?<>
       <View style={styles.settingsCard}>
         <Text style={styles.settingsTitle}>✦ Генерация названия и резюме</Text><Text style={styles.muted}>OpenAI-compatible Chat Completions. DeepSeek через OpenRouter — по умолчанию.</Text>

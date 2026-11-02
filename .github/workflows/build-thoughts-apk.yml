@@ -1,0 +1,57 @@
+name: Build Thoughts Android APK
+
+on:
+  push:
+    branches: [thoughts-ai-inbox-mvp]
+    paths:
+      - 'thoughts-mvp/**'
+      - '.github/workflows/build-thoughts-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    defaults:
+      run:
+        working-directory: thoughts-mvp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK 37
+        run: sdkmanager --install 'platforms;android-37' 'build-tools;37.0.0' 'platform-tools'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Validate types
+        run: npm run check:mobile
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --clean --non-interactive
+        working-directory: thoughts-mvp/apps/mobile
+      - name: Build standalone signed release APK
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+        working-directory: thoughts-mvp/apps/mobile/android
+        env:
+          EXPO_PUBLIC_API_URL: http://localhost:4000
+      - name: Verify APK signature
+        run: |
+          APK=$(find apps/mobile/android/app/build/outputs/apk/release -name '*.apk' -type f | head -1)
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
+          echo "APK created: $APK"
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: thoughts-android-apk
+          path: thoughts-mvp/apps/mobile/android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30

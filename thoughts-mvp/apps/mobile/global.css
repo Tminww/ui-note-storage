@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+@import 'uniwind';
+
+/* Semantic color tokens shared by Android, iOS and web. */
+@layer theme {
+  :where(.light, .light *) {
+    --background: 246 247 251;
+    --foreground: 30 36 66;
+    --card: 255 255 255;
+    --primary: 98 89 232;
+    --primary-foreground: 255 255 255;
+    --secondary: 240 239 255;
+    --secondary-foreground: 98 89 232;
+    --muted: 246 247 251;
+    --muted-foreground: 111 117 140;
+    --accent: 240 239 255;
+    --accent-foreground: 98 89 232;
+    --border: 231 233 242;
+    --input: 231 233 242;
+    --destructive: 199 80 88;
+  }
+  :where(.dark, .dark *) {
+    --background: 19 23 42;
+    --foreground: 240 242 251;
+    --card: 30 34 56;
+    --primary: 151 144 250;
+    --primary-foreground: 19 23 42;
+    --secondary: 49 45 92;
+    --secondary-foreground: 221 219 255;
+    --muted: 33 37 61;
+    --muted-foreground: 171 177 201;
+    --accent: 49 45 92;
+    --accent-foreground: 221 219 255;
+    --border: 59 63 87;
+    --input: 59 63 87;
+    --destructive: 247 122 131;
+  }
+}
+@theme inline {
+  --color-background: rgb(var(--background));
+  --color-foreground: rgb(var(--foreground));
+  --color-card: rgb(var(--card));
+  --color-primary: rgb(var(--primary));
+  --color-primary-foreground: rgb(var(--primary-foreground));
+  --color-secondary: rgb(var(--secondary));
+  --color-secondary-foreground: rgb(var(--secondary-foreground));
+  --color-muted: rgb(var(--muted));
+  --color-muted-foreground: rgb(var(--muted-foreground));
+  --color-accent: rgb(var(--accent));
+  --color-accent-foreground: rgb(var(--accent-foreground));
+  --color-border: rgb(var(--border));
+  --color-input: rgb(var(--input));
+  --color-destructive: rgb(var(--destructive));
+}
