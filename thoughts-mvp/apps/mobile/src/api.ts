@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 export type Category = 'idea' | 'task' | 'bug' | 'research' | 'note';
 export type ThoughtStatus = 'pending' | 'processing' | 'ready' | 'needs_review';
 export type Project = {
@@ -19,7 +20,28 @@ export type Settings = {
 export type ProviderOption = {id:string; label:string; configured:boolean};
 export type AIConfig = { generators:ProviderOption[]; decisions:ProviderOption[] };
 
-const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+const DEFAULT_API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+const API_URL_STORAGE_KEY = 'thoughts:api-url';
+let API_URL = DEFAULT_API_URL;
+
+export function getApiUrl(): string { return API_URL; }
+export async function loadApiUrl(): Promise<string> {
+  try {
+    const saved = await AsyncStorage.getItem(API_URL_STORAGE_KEY);
+    if (saved && /^https?:\/\//.test(saved)) API_URL = saved.replace(/\/+$/, '');
+  } catch { /* Keep the default URL if device storage is unavailable. */ }
+  return API_URL;
+}
+export async function saveApiUrl(url: string): Promise<string> {
+  const normalized = url.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/[^\s/]+(?::\d+)?(?:\/[^\s]*)?$/.test(normalized)) {
+    throw new Error('Укажи полный URL API, например http://192.168.1.25:4000');
+  }
+  await AsyncStorage.setItem(API_URL_STORAGE_KEY, normalized);
+  API_URL = normalized;
+  return API_URL;
+}
+
 
 export async function request<T>(endpoint: string, init?: RequestInit): Promise<T> {
   let response: Response;
