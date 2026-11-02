@@ -439,7 +439,7 @@ export default function App() {
 
     <Modal visible={showProjectPicker} transparent animationType="slide" onRequestClose={()=>setShowProjectPicker(false)}>
       <View style={styles.projectOverlay}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={()=>setShowProjectPicker(false)}/>
+        <Pressable style={StyleSheet.absoluteFill} onPress={()=>setShowProjectPicker(false)}/>
         <View style={styles.projectSheet}>
           <Text style={styles.settingsTitle}>Проект для мысли</Text>
           {[{id:null,name:'Авто — AI выберет сам'},...projects.map(p=>({id:p.id,name:p.name}))].map(p=>
