@@ -4,5 +4,5 @@ const base = require('./app.json').expo;
 const id = process.env.EXPO_EAS_PROJECT_ID;
 module.exports = {expo: {
   ...base,
-  ...(id ? {updates:{enabled:true,url:`https://u.expo.dev/${id}`,checkAutomatically:'ON_LOAD',fallbackToCacheTimeout:0},extra:{...(base.extra||{}),eas:{projectId:id}}} : {})
+  ...(id ? {updates:{enabled:true,url:`https://u.expo.dev/${id}`,requestHeaders:{'expo-channel-name':'preview'},checkAutomatically:'ON_LOAD',fallbackToCacheTimeout:0},extra:{...(base.extra||{}),eas:{projectId:id}}} : {})
 }};
