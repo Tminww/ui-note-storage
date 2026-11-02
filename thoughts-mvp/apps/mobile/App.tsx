@@ -9,6 +9,7 @@ import {
 import { api, getApiUrl, loadApiUrl, saveApiUrl, type AIConfig, type Category, type Project, type Settings, type Thought } from './src/api';
 import { useVoiceInput } from './src/useVoiceInput';
 import { Ionicons } from '@react-native-vector-icons/ionicons';
+import * as Haptics from 'expo-haptics';
 import { useAutomaticUpdates } from './src/useAutomaticUpdates';
 import { getStorageMode, initializeDeviceConfig, setStorageMode, getNotionRoot, setNotionRoot, hasSecret, saveSecret, type StorageMode } from './src/deviceConfig';
 import { connectNotionMcp, notionMcpDisconnect, notionMcpIsConnected } from './src/notionMcp';
@@ -86,7 +87,7 @@ export default function App() {
   const [mcpConnected,setMcpConnected] = useState(false);
   const updates = useAutomaticUpdates();
   const [draft,setDraft] = useState('');
-  const draftInputRef = useRef<TextInput>(null);
+  const draftInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
   const voice = useVoiceInput(setDraft);
   const [recordingSeconds,setRecordingSeconds] = useState(0);
   const [showProjectPicker,setShowProjectPicker] = useState(false);
@@ -187,6 +188,7 @@ export default function App() {
     if(!draft.trim()||busy||voice.active) return;
     void perform(async()=>{
       const t=await api.createThought(draft.trim(),draftProject);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(()=>{});
       setDraft('');setDraftProject(null);
       setNotice(t.status==='ready'?'Мысль сохранена и распределена по проекту':t.status==='needs_review'?'Мысль сохранена. Проверь классификацию':'Мысль сохранена в SQLite. Обработку можно повторить позже');
       setPage('inbox');setSelected('all');
@@ -420,11 +422,19 @@ export default function App() {
         {loading?<View style={{paddingTop:110}}><ActivityIndicator size="large" color={C.purple}/></View>:
           <View style={{width:'100%',maxWidth:850,paddingHorizontal:wide?36:18,paddingBottom:80,paddingTop:wide?52:24}}>
             {updates.ready?<View style={[styles.banner,{backgroundColor:C.pale}]}><Text style={{flex:1,color:C.ink}}>Обновление интерфейса готово</Text><Btn small onPress={()=>void updates.apply()}>Применить</Btn></View>:null}
-             {error?<View style={[styles.banner,{backgroundColor:'#FFF0F1'}]}><Text style={{flex:1,color:C.red}}>{error}</Text><Btn small kind="outline" onPress={()=>{setLoading(true);void refresh();}}>Обновить</Btn></View>:null}
+             {error&&page==='settings'?<View style={[styles.banner,{backgroundColor:'#FFF5E2'}]}><Text style={{flex:1,color:C.ink}}>{error}</Text><Btn small kind="outline" onPress={()=>{setLoading(true);void refresh();}}>Повторить</Btn></View>:null}
             {notice?<Pressable onPress={()=>setNotice('')} style={[styles.banner,{backgroundColor:C.greenBg}]}><Text style={{color:C.green,flex:1}}>{notice}</Text><Text style={{color:C.green}}>✕</Text></Pressable>:null}
             {page==='inbox'?inbox():page==='projects'?projectsPage():settingsPage()}
           </View>}
       </ScrollView>
+      {error&&page!=='settings'?<View style={styles.errorToast}>
+        <Ionicons name="alert-circle-outline" size={20} color={C.amber}/>
+        <Text style={{flex:1,color:C.ink,fontSize:12}} numberOfLines={2}>{storageModeState==='notion'?'Подключи Notion, чтобы сохранять мысли.':error}</Text>
+        <Pressable accessibilityRole="button" onPress={()=>{if(storageModeState==='notion')setPage('settings');else{setLoading(true);void refresh();}}} style={{paddingHorizontal:7,paddingVertical:10}}>
+          <Text style={{color:C.purple,fontWeight:'700',fontSize:13}}>{storageModeState==='notion'?'Настроить':'Повторить'}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть предупреждение" onPress={()=>setError('')} style={{padding:5}}><Ionicons name="close" size={18} color={C.muted}/></Pressable>
+      </View>:null}
     </View>
 
     <Modal visible={showProjectPicker} transparent animationType="slide" onRequestClose={()=>setShowProjectPicker(false)}>
@@ -544,5 +554,6 @@ const styles = StyleSheet.create({
   projectOverlay:{flex:1,backgroundColor:'rgba(24,29,50,.43)',justifyContent:'flex-end'},
   projectSheet:{backgroundColor:C.white,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:22,paddingTop:22,paddingBottom:46,gap:8},
   projectOption:{minHeight:52,flexDirection:'row',alignItems:'center',gap:12,borderBottomWidth:1,borderBottomColor:C.line},
+  errorToast:{position:'absolute',bottom:20,left:12,right:12,zIndex:6,backgroundColor:'#FFF6E5',borderWidth:1,borderColor:'#EAD5A9',borderRadius:12,flexDirection:'row',alignItems:'center',gap:7,padding:10,elevation:5},
   colorChoice:{width:28,height:28,borderRadius:14,borderWidth:2,borderColor:'transparent'}
 });
