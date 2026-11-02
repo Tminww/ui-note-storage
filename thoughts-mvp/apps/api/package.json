@@ -1,0 +1,11 @@
+{
+  "name": "@thoughts/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-sqlite src/server.mjs",
+    "test": "node --experimental-sqlite --test test/*.test.mjs"
+  },
+  "engines": {"node": ">=22.13.0"}
+}
