@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { api, getApiUrl, loadApiUrl, saveApiUrl, type AIConfig, type Category, type Project, type Settings, type Thought } from './src/api';
 import { useVoiceInput } from './src/useVoiceInput';
-import * as Updates from 'expo-updates';
+import { useAutomaticUpdates } from './src/useAutomaticUpdates';
 import { getStorageMode, initializeDeviceConfig, setStorageMode, getNotionRoot, setNotionRoot, hasSecret, saveSecret, type StorageMode } from './src/deviceConfig';
 import { connectNotionMcp, notionMcpDisconnect, notionMcpIsConnected } from './src/notionMcp';
 
@@ -83,7 +83,7 @@ export default function App() {
   const [notionHasToken,setNotionHasToken] = useState(false);
   const [routerHasToken,setRouterHasToken] = useState(false);
   const [mcpConnected,setMcpConnected] = useState(false);
-  const [updateStatus,setUpdateStatus] = useState('');
+  const updates = useAutomaticUpdates();
   const [draft,setDraft] = useState('');
   const voice = useVoiceInput(setDraft);
   const [draftProject,setDraftProject] = useState<string|null>(null);
@@ -137,13 +137,7 @@ export default function App() {
     try{await connectNotionMcp();setMcpConnected(true);setNotice('Notion MCP подключён по OAuth');}
     catch(e){setError((e as Error).message);}finally{setBusy(false);}
   })();
-  const checkUpdates=()=>void (async()=>{
-    if(!Updates.isEnabled){setUpdateStatus('EAS Update не настроен. Нужен EXPO_EAS_PROJECT_ID и новый APK.');return;}
-    try{setUpdateStatus('Проверка обновлений…');const result=await Updates.checkForUpdateAsync();
-      if(!result.isAvailable){setUpdateStatus('Установлена актуальная версия');return;}
-      setUpdateStatus('Скачивание обновления…');await Updates.fetchUpdateAsync();setUpdateStatus('Обновление загружено. Перезапуск…');await Updates.reloadAsync();
-    }catch(e){setUpdateStatus('Ошибка обновления: '+(e as Error).message);}
-  })();
+
   const updateServer = () => {
     void (async () => {
       try {
@@ -368,10 +362,11 @@ export default function App() {
       <Btn onPress={saveSettings} loading={busy}>Сохранить настройки</Btn>
     </>:null}
     <View style={styles.settingsCard}>
-      <Text style={styles.settingsTitle}>Обновления приложения (EAS Update)</Text>
-      <Text style={styles.muted}>JS-обновления устанавливаются без нового APK, если приложение привязано к Expo project ID и совместимо с установленной нативной версией.</Text>
-      <Btn kind="outline" onPress={checkUpdates}>Проверить обновления</Btn>
-      {updateStatus?<Text style={styles.muted}>{updateStatus}</Text>:null}
+      <Text style={styles.settingsTitle}>Обновления</Text>
+      <Text style={styles.muted}>{updates.enabled?'Интерфейс обновляется автоматически. Новые версии скачиваются при запуске и возвращении в приложение.':'В этом APK автообновления не подключены. После настройки Expo потребуется один новый APK.'}</Text>
+      <Btn kind="outline" onPress={()=>void updates.check(true)} disabled={updates.checking}>Проверить сейчас</Btn>
+      {updates.status?<Text style={styles.muted}>{updates.status}</Text>:null}
+      {updates.ready?<Btn onPress={()=>void updates.apply()}>Применить обновление</Btn>:null}
     </View>
   </View>;
 
@@ -388,7 +383,8 @@ export default function App() {
       <ScrollView style={{flex:1}} keyboardShouldPersistTaps="handled" contentContainerStyle={{flexGrow:1,alignItems:'center'}}>
         {loading?<View style={{paddingTop:110}}><ActivityIndicator size="large" color={C.purple}/></View>:
           <View style={{width:'100%',maxWidth:850,paddingHorizontal:wide?36:18,paddingBottom:80,paddingTop:wide?52:24}}>
-            {error?<View style={[styles.banner,{backgroundColor:'#FFF0F1'}]}><Text style={{flex:1,color:C.red}}>{error}</Text><Btn small kind="outline" onPress={()=>{setLoading(true);void refresh();}}>Обновить</Btn></View>:null}
+            {updates.ready?<View style={[styles.banner,{backgroundColor:C.pale}]}><Text style={{flex:1,color:C.ink}}>Обновление интерфейса готово</Text><Btn small onPress={()=>void updates.apply()}>Применить</Btn></View>:null}
+             {error?<View style={[styles.banner,{backgroundColor:'#FFF0F1'}]}><Text style={{flex:1,color:C.red}}>{error}</Text><Btn small kind="outline" onPress={()=>{setLoading(true);void refresh();}}>Обновить</Btn></View>:null}
             {notice?<Pressable onPress={()=>setNotice('')} style={[styles.banner,{backgroundColor:C.greenBg}]}><Text style={{color:C.green,flex:1}}>{notice}</Text><Text style={{color:C.green}}>✕</Text></Pressable>:null}
             {page==='inbox'?inbox():page==='projects'?projectsPage():settingsPage()}
           </View>}
