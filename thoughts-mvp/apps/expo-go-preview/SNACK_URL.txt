@@ -1,0 +1,1 @@
+https://snack.expo.dev/?name=Thoughts+UI+Demo&sourceUrl=https%3A%2F%2Fraw.githubusercontent.com%2FTminww%2Fui-note-storage%2Fthoughts-ai-inbox-mvp%2Fthoughts-mvp%2Fapps%2Fexpo-go-preview%2FApp.js&sdkVersion=57.0.0&platform=mydevice
