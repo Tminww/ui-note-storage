@@ -299,7 +299,7 @@ export default function App() {
   </View>;
 
   return <View style={styles.app}>
-    <StatusBar barStyle="dark-content" backgroundColor={C.bg}/>
+    <StatusBar barStyle="dark-content"/>
     {wide?sideNav():topMobile()}
     <View style={styles.main}>
       {!wide?<View style={styles.mobileTabs}>
