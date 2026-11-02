@@ -60,6 +60,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Validate types
         run: npm run check:mobile
+      - name: Run API regression tests
+        run: npm test
       - name: Generate native Android project
         run: npx expo prebuild --platform android --clean --non-interactive
         working-directory: thoughts-mvp/apps/mobile
