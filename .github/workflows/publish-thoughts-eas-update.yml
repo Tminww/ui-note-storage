@@ -11,31 +11,54 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: thoughts-preview-ota
+  cancel-in-progress: true
+
 jobs:
   publish-update:
-    # Repository variable EXPO_EAS_PROJECT_ID must be configured by the Expo project owner.
-    if: ${{ vars.EXPO_EAS_PROJECT_ID != '' }}
+    # Before the initial Expo setup, ordinary commits do not create a red CI.
+    # Manual runs show actionable errors when setup is incomplete.
+    if: ${{ vars.EXPO_EAS_PROJECT_ID != '' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: thoughts-mvp/apps/mobile
     env:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EXPO_EAS_PROJECT_ID: ${{ vars.EXPO_EAS_PROJECT_ID }}
+      CI: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Validate Expo credentials
+      - name: Verify Expo authorization and project ID
+        shell: bash
         run: |
-          test -n "$EXPO_TOKEN" || { echo "Missing EXPO_TOKEN GitHub Actions secret"; exit 1; }
-          test -n "$EXPO_EAS_PROJECT_ID" || { echo "Missing EXPO_EAS_PROJECT_ID repository variable"; exit 1; }
+          test -n "$EXPO_TOKEN" || { echo "::error::Missing GitHub Actions secret EXPO_TOKEN. Create an Expo access token in expo.dev and save it as a repository secret."; exit 1; }
+          test -n "$EXPO_EAS_PROJECT_ID" || { echo "::error::Missing repository variable EXPO_EAS_PROJECT_ID. Run eas init in apps/mobile first."; exit 1; }
+          node - <<'NODE'
+          const id = process.env.EXPO_EAS_PROJECT_ID;
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+            throw Error('EXPO_EAS_PROJECT_ID must be the EAS project UUID');
+          }
+          const {expo} = require('./app.config.js');
+          if (!expo.updates?.enabled ||
+              expo.updates?.url !== 'https://u.expo.dev/' + id ||
+              expo.updates?.requestHeaders?.['expo-channel-name'] !== 'preview' ||
+              expo.extra?.eas?.projectId !== id) {
+            throw Error('Preview update configuration does not match the project UUID');
+          }
+          console.log('EAS project and preview OTA configuration verified');
+          NODE
       - name: Install dependencies
         run: npm install --no-audit --no-fund
         working-directory: thoughts-mvp
-      - name: Check types
+      - name: Validate TypeScript
         run: npm run typecheck
-      - name: Publish preview OTA update
-        run: npx --yes eas-cli@latest update --branch preview --environment preview --message "GitHub ${{ github.sha }}" --non-interactive
+      - name: Check authenticated Expo account
+        run: npx --yes eas-cli@latest whoami --non-interactive
+      - name: Publish preview Android update
+        run: npx --yes eas-cli@latest update --channel preview --platform android --environment preview --message "Thoughts UI ${{ github.sha }}" --non-interactive
