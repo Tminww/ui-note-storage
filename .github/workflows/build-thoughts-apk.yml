@@ -46,6 +46,14 @@ jobs:
       - name: Generate native Android project
         run: npx expo prebuild --platform android --clean --non-interactive
         working-directory: thoughts-mvp/apps/mobile
+      - name: Check Expo entry point
+        working-directory: thoughts-mvp/apps/mobile
+        run: |
+          test -f index.js
+          ENTRY=$(node -e "require('expo/scripts/resolveAppEntry')" "$(pwd)" android absolute)
+          echo "Expo Android entry: $ENTRY"
+          test -n "$ENTRY"
+          test -f "$ENTRY"
       - name: Build standalone signed release APK
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
         working-directory: thoughts-mvp/apps/mobile/android
