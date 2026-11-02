@@ -1,0 +1,14 @@
+{
+  "name": "thoughts-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/api", "apps/mobile"],
+  "scripts": {
+    "api": "npm run dev -w @thoughts/api",
+    "web": "npm run web -w @thoughts/mobile",
+    "mobile": "npm run start -w @thoughts/mobile",
+    "test": "npm run test -w @thoughts/api",
+    "check:mobile": "npm run typecheck -w @thoughts/mobile"
+  },
+  "engines": {"node": ">=22.13.0"}
+}
