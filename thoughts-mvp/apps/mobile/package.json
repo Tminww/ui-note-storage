@@ -2,7 +2,7 @@
   "name": "@thoughts/mobile",
   "private": true,
   "version": "0.1.0",
-  "main": "node_modules/expo/AppEntry.js",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "web": "expo start --web",
