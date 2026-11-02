@@ -310,13 +310,13 @@ export default function App() {
 
   const inbox=()=><View style={styles.pageContent}>
     {composer()}
-    <SectionHeading title={selectedLabel} caption={`${shownThoughts.length} записей`}/>
+    {thoughts.length>0?<><SectionHeading title={selectedLabel} caption={`${shownThoughts.length} записей`}/>
     <View style={styles.searchField}><Text style={{fontSize:18,color:C.light}}>⌕</Text><TextInput value={search} onChangeText={setSearch} placeholder="Поиск по мыслям и тегам" placeholderTextColor={C.light} style={styles.searchInput}/>{search?<Pressable onPress={()=>setSearch('')}><Text style={{color:C.muted}}>✕</Text></Pressable>:null}</View>
     <View style={styles.filters}>
       <Chip onPress={()=>setFilter('all')} selected={filter==='all'}>Все</Chip>
       <Chip onPress={()=>setFilter('needs_review')} selected={filter==='needs_review'}>На проверку</Chip>
       <Chip onPress={()=>setFilter('ready')} selected={filter==='ready'}>Обработанные</Chip>
-    </View>
+    </View></>:null}
     {shownThoughts.length?<View style={{gap:12}}>{shownThoughts.map(thoughtCard)}</View>:thoughts.length===0?<View style={styles.emptyWelcome}>
       <Ionicons name="bulb-outline" size={32} color={C.purple}/>
       <Text style={{fontSize:18,color:C.ink,fontWeight:'800'}}>Пока нет мыслей</Text>
@@ -412,13 +412,7 @@ export default function App() {
     <StatusBar barStyle="dark-content"/>
     {wide?sideNav():topMobile()}
     <View style={styles.main}>
-      {!wide?<View style={styles.mobileTabs}>
-        <Chip selected={page==='inbox'&&selected==='all'} onPress={()=>goInbox()}>Все мысли</Chip>
-        <Chip selected={page==='inbox'&&selected==='inbox'} onPress={()=>goInbox('inbox')}>Inbox</Chip>
-        <Chip selected={page==='projects'} onPress={()=>setPage('projects')}>Проекты</Chip>
-        <Chip selected={page==='settings'} onPress={()=>setPage('settings')}>AI</Chip>
-      </View>:null}
-      <ScrollView style={{flex:1}} keyboardShouldPersistTaps="handled" contentContainerStyle={{flexGrow:1,alignItems:'center'}}>
+      <ScrollView style={{flex:1,marginTop:wide?0:76}} keyboardShouldPersistTaps="handled" contentContainerStyle={{flexGrow:1,alignItems:'center'}}>
         {loading?<View style={{paddingTop:110}}><ActivityIndicator size="large" color={C.purple}/></View>:
           <View style={{width:'100%',maxWidth:850,paddingHorizontal:wide?36:18,paddingBottom:80,paddingTop:wide?52:24}}>
             {updates.ready?<View style={[styles.banner,{backgroundColor:C.pale}]}><Text style={{flex:1,color:C.ink}}>Обновление интерфейса готово</Text><Btn small onPress={()=>void updates.apply()}>Применить</Btn></View>:null}
@@ -427,7 +421,21 @@ export default function App() {
             {page==='inbox'?inbox():page==='projects'?projectsPage():settingsPage()}
           </View>}
       </ScrollView>
-      {error&&page!=='settings'?<View style={styles.errorToast}>
+      {!wide?<View style={styles.bottomNav}>
+        <Pressable onPress={()=>goInbox()} accessibilityRole="tab" accessibilityLabel="Мысли" accessibilityState={{selected:page==='inbox'}} style={styles.bottomNavTab}>
+          <Ionicons name={page==='inbox'?'documents':'documents-outline'} size={22} color={page==='inbox'?C.purple:C.muted}/>
+          <Text style={[styles.bottomNavLabel,page==='inbox'&&styles.bottomNavActive]}>Мысли</Text>
+        </Pressable>
+        <Pressable onPress={()=>setPage('projects')} accessibilityRole="tab" accessibilityLabel="Проекты" accessibilityState={{selected:page==='projects'}} style={styles.bottomNavTab}>
+          <Ionicons name={page==='projects'?'folder':'folder-outline'} size={22} color={page==='projects'?C.purple:C.muted}/>
+          <Text style={[styles.bottomNavLabel,page==='projects'&&styles.bottomNavActive]}>Проекты</Text>
+        </Pressable>
+        <Pressable onPress={()=>setPage('settings')} accessibilityRole="tab" accessibilityLabel="Настройки" accessibilityState={{selected:page==='settings'}} style={styles.bottomNavTab}>
+          <Ionicons name={page==='settings'?'settings':'settings-outline'} size={22} color={page==='settings'?C.purple:C.muted}/>
+          <Text style={[styles.bottomNavLabel,page==='settings'&&styles.bottomNavActive]}>Настройки</Text>
+        </Pressable>
+      </View>:null}
+      {error&&page!=='settings'?<View style={[styles.errorToast,!wide&&{bottom:90}]}>
         <Ionicons name="alert-circle-outline" size={20} color={C.amber}/>
         <Text style={{flex:1,color:C.ink,fontSize:12}} numberOfLines={2}>{storageModeState==='notion'?'Подключи Notion, чтобы сохранять мысли.':error}</Text>
         <Pressable accessibilityRole="button" onPress={()=>{if(storageModeState==='notion')setPage('settings');else{setLoading(true);void refresh();}}} style={{paddingHorizontal:7,paddingVertical:10}}>
@@ -538,6 +546,10 @@ const styles = StyleSheet.create({
   banner:{borderRadius:10,paddingHorizontal:14,paddingVertical:12,flexDirection:'row',gap:10,alignItems:'center',marginBottom:16},
   modalOverlay:{flex:1,backgroundColor:'rgba(24,29,50,.43)',justifyContent:'center',alignItems:'center',paddingHorizontal:14},modalScroll:{flexGrow:1,width:'100%',justifyContent:'center',alignItems:'center',paddingVertical:24},
   modalCard:{backgroundColor:C.white,borderRadius:18,width:'100%',maxWidth:570,padding:23,gap:8},modalHead:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:10},close:{fontSize:19,color:C.muted,padding:5},
+  bottomNav:{height:75,paddingBottom:Platform.OS==='ios'?12:8,backgroundColor:C.white,borderTopWidth:1,borderTopColor:C.line,flexDirection:'row',alignItems:'center',justifyContent:'space-around'},
+  bottomNavTab:{flex:1,minHeight:52,gap:3,alignItems:'center',justifyContent:'center'},
+  bottomNavLabel:{color:C.muted,fontWeight:'600',fontSize:11},
+  bottomNavActive:{color:C.purple},
   inputAndMic:{flexDirection:'row',gap:10,alignItems:'flex-end'},
   micFab:{width:58,height:58,borderRadius:29,backgroundColor:C.purple,alignItems:'center',justifyContent:'center',marginBottom:6},
   micFabActive:{backgroundColor:C.red},
