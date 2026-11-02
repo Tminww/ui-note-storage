@@ -233,3 +233,31 @@ GitHub Actions → **Build Thoughts Android APK** → **Run workflow**
 > APK — это клиент; SQLite находится на сервере. В настройках
 > мобильного приложения нужно указать доступный по сети URL Thoughts API.
 > Адрес `localhost` внутри Android означает сам телефон, а не компьютер.
+
+
+## Автоматические обновления интерфейса (EAS Update / Android preview)
+
+**Цель:** один раз установить OTA-enabled APK и дальше получать изменения React Native интерфейса без переустановки. Файлы в `apps/mobile` автоматически запускают workflow `.github/workflows/publish-thoughts-eas-update.yml` и публикуются в **Android `preview`**. Обновления для несовместимых нативных версий не доставляются.
+
+### Одноразовая активация — требуются владелец Expo и его авторизация
+
+Доступа к твоему Expo-аккаунту и прав на изменение GitHub Actions Secrets у CI-агента нет. Не отправляй `EXPO_TOKEN` в чат и не коммить его в репозиторий.
+
+1. Создай или открой аккаунт на https://expo.dev/. На компьютере из `thoughts-mvp/apps/mobile` выполни:
+   ```bash
+   npx eas-cli@latest login
+   npx eas-cli@latest init
+   npx eas-cli@latest update:configure --environment preview
+   ```
+   Команда Expo создаст или привяжет твой EAS-проект и выдаст UUID проекта. Сверь внесённые изменения с динамическим `app.config.js`: у нас `updates.url` и `extra.eas.projectId` устанавливаются через `EXPO_EAS_PROJECT_ID`. Не отключай EAS Update и не меняй `runtimeVersion` без нативной пересборки.
+2. В **GitHub → репозиторий `Tminww/ui-note-storage` → Settings → Secrets and variables → Actions → Variables** создай переменную `EXPO_EAS_PROJECT_ID` и вставь UUID из EAS (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
+3. В настройках Expo создай **личный access token** (https://expo.dev/settings/access-tokens). В **GitHub → Settings → Secrets and variables → Actions → Secrets** создай секрет `EXPO_TOKEN`. Храни токен только там, не в коде приложения. У аккаунта должен быть доступ к EAS-проекту.
+4. Убедись, что в EAS настроена среда `preview` (expo.dev → Project → Environment variables). Workflow использует `eas update --channel preview --platform android --environment preview`.
+5. После настройки открой **GitHub → Actions → Build Thoughts Android APK → Run workflow** для ветки `thoughts-ai-inbox-mvp`. Дождись успешной проверки подписи и **установи APK из артефакта `thoughts-android-apk-ota-enabled`**. Старые APK, собранные без `EXPO_EAS_PROJECT_ID`, никогда не получат EAS Updates: их обязательно заменить один раз.
+6. Для проверки запусти workflow **Publish Thoughts EAS Update → Run workflow**. После зелёного статуса открой Thoughts на телефоне. Обновление скачивается при открытии и возвращении в приложение, а кнопка **«Применить»** появляется, когда новая версия готова. При следующем полном запуске загруженное обновление тоже применится.
+
+**Что обновляется:** JS/TS-код, компоненты, стили и встроенные картинки. **Что требует нового APK:** нативные плагины, разрешения, версии Expo SDK/React Native, `app.config.js`, `app.json`, зависимости с нативным кодом.
+
+**Статус:** пока `EXPO_EAS_PROJECT_ID` или `EXPO_TOKEN` отсутствуют, автоматическая публикация неактивна. GitHub job может отображаться `skipped` — это не успешная публикация. Ранее скачанный APK без EAS Project ID также не сможет обновляться автоматически. Вручную запущенный publish workflow покажет точную ошибку настройки, если credentials отсутствуют.
+
+**Отладка:** см. https://docs.expo.dev/eas-update/debug/ и https://docs.expo.dev/eas-update/getting-started/.
