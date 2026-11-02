@@ -1,13 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './global.css';
 import { Button as GSButton, ButtonText as GSButtonText, ButtonSpinner as GSButtonSpinner } from './components/ui/button';
 import { Card as GSCard, Heading as GSHeading, VStack as GSVStack, Text as GSText } from './components/ui/surfaces';
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressable,
-  ScrollView, StatusBar, StyleSheet, Text, TextInput, View, useWindowDimensions
+  ActivityIndicator, Alert, Animated, KeyboardAvoidingView, Modal, Platform, Pressable,
+  ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions
 } from 'react-native';
 import { api, getApiUrl, loadApiUrl, saveApiUrl, type AIConfig, type Category, type Project, type Settings, type Thought } from './src/api';
 import { useVoiceInput } from './src/useVoiceInput';
+import { Ionicons } from '@react-native-vector-icons/ionicons';
 import { useAutomaticUpdates } from './src/useAutomaticUpdates';
 import { getStorageMode, initializeDeviceConfig, setStorageMode, getNotionRoot, setNotionRoot, hasSecret, saveSecret, type StorageMode } from './src/deviceConfig';
 import { connectNotionMcp, notionMcpDisconnect, notionMcpIsConnected } from './src/notionMcp';
@@ -15,7 +16,7 @@ import { connectNotionMcp, notionMcpDisconnect, notionMcpIsConnected } from './s
 type Page = 'inbox' | 'projects' | 'settings';
 type Selected = 'all' | 'inbox' | string;
 const C = {
-  bg:'#F6F7FB', ink:'#1E2442',muted:'#858AA0',light:'#AFB4C3',
+  bg:'#F6F7FB', ink:'#1E2442',muted:'#626981',light:'#737A8D',
   purple:'#6259E8',pale:'#F0EFFF',line:'#E7E9F2',white:'#FFFFFF',
   green:'#1F936A',greenBg:'#E8F8F1',amber:'#A36F18',amberBg:'#FFF5E2',red:'#C75058'
 };
@@ -85,7 +86,22 @@ export default function App() {
   const [mcpConnected,setMcpConnected] = useState(false);
   const updates = useAutomaticUpdates();
   const [draft,setDraft] = useState('');
+  const draftInputRef = useRef<TextInput>(null);
   const voice = useVoiceInput(setDraft);
+  const [recordingSeconds,setRecordingSeconds] = useState(0);
+  const [showProjectPicker,setShowProjectPicker] = useState(false);
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(()=>{
+    if (!voice.active) {setRecordingSeconds(0); pulse.setValue(1);return;}
+    const started=Date.now();
+    const timer=setInterval(()=>setRecordingSeconds(Math.floor((Date.now()-started)/1000)),1000);
+    const animation=Animated.loop(Animated.sequence([
+      Animated.timing(pulse,{toValue:1.09,duration:550,useNativeDriver:true}),
+      Animated.timing(pulse,{toValue:1,duration:550,useNativeDriver:true})
+    ]));
+    animation.start();
+    return ()=>{clearInterval(timer);animation.stop();pulse.setValue(1);};
+  },[voice.active,pulse]);
   const [draftProject,setDraftProject] = useState<string|null>(null);
   const [search,setSearch] = useState('');
   const [filter,setFilter] = useState<'all'|'needs_review'|'ready'>('all');
@@ -235,33 +251,45 @@ export default function App() {
 
   const topMobile=()=><View style={styles.mobileHeader}>
     <View style={{flexDirection:'row',alignItems:'center',gap:10}}><View style={[styles.logo,{width:35,height:35}]}><Text style={styles.logoIcon}>✳</Text></View><Text style={styles.brandText}>thoughts<Text style={{color:C.purple}}>.</Text></Text></View>
-    <Pressable onPress={()=>setPage('settings')} style={styles.topSettings}><Text style={{fontSize:19}}>⚙</Text></Pressable>
+    <Pressable onPress={()=>setPage('settings')} style={styles.topSettings} accessibilityRole="button" accessibilityLabel="Настройки"><Ionicons name="settings-outline" size={23} color={C.ink}/></Pressable>
   </View>;
 
-  const composer=()=><GSCard className="border-primary/20 p-5">
-    <View style={styles.composerTop}><Text style={{fontWeight:'700',color:C.ink,fontSize:15}}>✦  Новая мысль</Text><Text style={styles.smallMuted}>Напиши или продиктуй на русском</Text></View>
-    <TextInput accessibilityLabel="Запиши свою мысль" style={styles.composerInput} multiline editable={!voice.active} placeholder="Напиши идею или нажми 🎙 и скажи её вслух…" placeholderTextColor={C.light} value={draft} onChangeText={setDraft} textAlignVertical="top" maxLength={10000}/>
-    <View style={styles.voiceRow}>
-      <Pressable accessibilityRole="button" accessibilityLabel={voice.active?'Остановить запись голоса':'Начать диктовку на русском'}
-        onPress={()=>voice.active?voice.stop():void voice.start(draft)} disabled={busy}
-        style={[styles.voiceButton,voice.active&&styles.voiceButtonActive]}>
-        <Text style={{fontWeight:'800',color:voice.active?C.red:C.purple}}>{voice.active?'■ Завершить':'🎙 Диктовать'}</Text>
-      </Pressable>
-      <Text style={styles.voiceState}>{voice.state==='listening'?'● Слушаю…':voice.state==='starting'?'Запуск микрофона…':voice.state==='stopping'?'Завершаю…':'Русский · ru-RU'}</Text>
+  const composer=()=><GSCard className="border-primary/20 p-4">
+    <View style={styles.inputAndMic}>
+      <TextInput ref={draftInputRef} accessibilityLabel="Новая мысль" style={styles.composerInput}
+        multiline editable={!voice.active} placeholder="Что у тебя в голове?"
+        placeholderTextColor={C.muted} value={draft} onChangeText={setDraft} textAlignVertical="top" maxLength={10000}/>
+      <Animated.View style={{transform:[{scale:voice.active?pulse:1}]}}>
+        <Pressable accessibilityRole="button" accessibilityLabel={voice.active?'Остановить запись':'Начать диктовку'}
+          hitSlop={8} disabled={busy} onPress={()=>voice.active?voice.stop():void voice.start(draft)}
+          style={[styles.micFab,voice.active&&styles.micFabActive]}>
+          <Ionicons name={voice.active?'stop':'mic'} size={26} color="#FFFFFF"/>
+        </Pressable>
+      </Animated.View>
     </View>
+    {voice.active?<View style={styles.recordingRow}>
+      <View style={styles.recordingDot}/>
+      <Text style={{flex:1,color:C.ink,fontWeight:'600'}}>{voice.state==='listening'?'Слушаю…':voice.state==='starting'?'Включаю микрофон…':'Завершаю…'}</Text>
+      <Text style={{color:C.red,fontWeight:'700'}}>{String(Math.floor(recordingSeconds/60)).padStart(2,'0')}:{String(recordingSeconds%60).padStart(2,'0')}</Text>
+      <Pressable accessibilityRole="button" onPress={voice.stop} style={styles.stopAction}><Text style={{fontWeight:'700',color:C.red}}>Стоп</Text></Pressable>
+    </View>:null}
     {voice.error?<Text style={styles.voiceError}>{voice.error}</Text>:null}
-    {Platform.OS!=='web'?<Pressable onPress={()=>!voice.active&&voice.setOnDeviceOnly(!voice.onDeviceOnly)} disabled={voice.active}>
-      <Text style={styles.voicePrivacy}>{voice.onDeviceOnly?'☑':'☐'} Только на устройстве (нужен русский офлайн-пакет)</Text>
-    </Pressable>:null}
-    <Text style={styles.voicePrivacy}>Аудио не отправляется в Thoughts API и не сохраняется. Системный распознаватель может передавать его своему провайдеру. Проверяй текст перед сохранением.</Text>
-    <View style={styles.composerDivider}/>
     <View style={styles.composerBottom}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{flex:1}} contentContainerStyle={{gap:6,alignItems:'center'}}>
-        <Chip selected={!draftProject} onPress={()=>setDraftProject(null)}>✧ Авто-проект</Chip>
-        {projects.map(p=><Chip key={p.id} selected={draftProject===p.id} onPress={()=>setDraftProject(p.id)}>{p.name}</Chip>)}
-      </ScrollView>
-      <Btn onPress={createThought} disabled={!draft.trim()||busy||voice.active} loading={busy} small>Сохранить ↗</Btn>
+      <Pressable accessibilityRole="button" accessibilityLabel="Выбрать проект" onPress={()=>setShowProjectPicker(true)} style={styles.projectSelect}>
+        <Ionicons name="folder-outline" size={17} color={C.muted}/>
+        <Text numberOfLines={1} style={{color:C.ink,fontWeight:'600',fontSize:13,flexShrink:1}}>Проект: {draftProject?projects.find(p=>p.id===draftProject)?.name||'Авто':'Авто'}</Text>
+        <Ionicons name="chevron-down" size={15} color={C.muted}/>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Сохранить мысль" disabled={!draft.trim()||busy||voice.active} onPress={createThought}
+        style={[styles.saveAction,(!draft.trim()||busy||voice.active)&&styles.saveDisabled]}>
+        {busy?<ActivityIndicator size="small" color="#FFFFFF"/>:<Ionicons name="checkmark" size={20} color="#FFFFFF"/>}
+        <Text style={{color:'#FFFFFF',fontSize:14,fontWeight:'700'}}>Сохранить</Text>
+      </Pressable>
     </View>
+    <Pressable onPress={()=>setPage('settings')} style={styles.voiceInfo} accessibilityRole="button" accessibilityLabel="Настройки голосового ввода">
+      <Ionicons name="information-circle-outline" size={16} color={C.muted}/>
+      <Text style={{fontSize:12,color:C.muted}}>Настройки голоса</Text>
+    </Pressable>
   </GSCard>;
 
   const thoughtCard=(t:Thought)=><Pressable key={t.id} onPress={()=>showEdit(t)} style={({pressed})=>[styles.thoughtCard,pressed&&{opacity:.78}]}>
@@ -279,13 +307,7 @@ export default function App() {
   </Pressable>;
 
   const inbox=()=><View style={styles.pageContent}>
-    <View style={styles.greeting}><Text style={styles.eyebrow}>ЛИЧНОЕ ПРОСТРАНСТВО ДЛЯ ИДЕЙ</Text><Text style={styles.title}>Сохраняй мысли.<Text style={{color:C.purple}}> Думай дальше.</Text></Text><Text style={styles.subtitle}>Всё важное в одном месте. Jev разложит по проектам, DeepSeek выделит главное.</Text></View>
     {composer()}
-    <View style={styles.metrics}>
-      <View style={styles.metricCard}><Text style={styles.metricCount}>{thoughts.length}</Text><Text style={styles.metricLabel}>Всего мыслей</Text></View>
-      <View style={styles.metricCard}><Text style={styles.metricCount}>{projects.length}</Text><Text style={styles.metricLabel}>Проектов</Text></View>
-      <View style={styles.metricCard}><Text style={[styles.metricCount,{color:reviewCount?C.amber:C.ink}]}>{reviewCount}</Text><Text style={styles.metricLabel}>На проверку</Text></View>
-    </View>
     <SectionHeading title={selectedLabel} caption={`${shownThoughts.length} записей`}/>
     <View style={styles.searchField}><Text style={{fontSize:18,color:C.light}}>⌕</Text><TextInput value={search} onChangeText={setSearch} placeholder="Поиск по мыслям и тегам" placeholderTextColor={C.light} style={styles.searchInput}/>{search?<Pressable onPress={()=>setSearch('')}><Text style={{color:C.muted}}>✕</Text></Pressable>:null}</View>
     <View style={styles.filters}>
@@ -293,7 +315,12 @@ export default function App() {
       <Chip onPress={()=>setFilter('needs_review')} selected={filter==='needs_review'}>На проверку</Chip>
       <Chip onPress={()=>setFilter('ready')} selected={filter==='ready'}>Обработанные</Chip>
     </View>
-    {shownThoughts.length?<View style={{gap:12}}>{shownThoughts.map(thoughtCard)}</View>:<Empty icon="✳" title="Здесь пока пусто" description="Запиши первую мысль — приложение поможет её разобрать и сохранить."/>}
+    {shownThoughts.length?<View style={{gap:12}}>{shownThoughts.map(thoughtCard)}</View>:thoughts.length===0?<View style={styles.emptyWelcome}>
+      <Ionicons name="bulb-outline" size={32} color={C.purple}/>
+      <Text style={{fontSize:18,color:C.ink,fontWeight:'800'}}>Пока нет мыслей</Text>
+      <Text style={{fontSize:13,color:C.muted,textAlign:'center'}}>Продиктуй первую или попробуй пример:</Text>
+      {['Идея для проекта','Что сделать завтра','Итоги встречи'].map(v=><Pressable key={v} style={styles.exampleRow} onPress={()=>{setDraft(v);draftInputRef.current?.focus();}}><Text style={{color:C.purple,fontWeight:'600'}}>{v}</Text></Pressable>)}
+    </View>:<Empty icon="✳" title="Ничего не найдено" description="Измени поиск или фильтры."/>}
   </View>;
 
   const projectsPage=()=><View style={styles.pageContent}>
@@ -307,8 +334,17 @@ export default function App() {
   </View>;
 
   const settingsPage=()=><View style={styles.pageContent}>
-    <Text style={styles.eyebrow}>КОНФИГУРАЦИЯ</Text>
-    <SectionHeading title="Настройки AI" caption="Модели можно менять без правок в мобильном приложении."/>
+    <SectionHeading title="Настройки" caption="Голос, подключения и AI."/>
+    <View style={styles.settingsCard}>
+      <Text style={styles.settingsTitle}>Голос</Text>
+      <Text style={styles.muted}>Язык распознавания: русский</Text>
+      {Platform.OS!=='web'?<View style={styles.voiceSwitchRow}>
+        <View style={{flex:1}}><Text style={{fontSize:14,color:C.ink,fontWeight:'700'}}>Только на устройстве</Text><Text style={styles.muted}>Нужен офлайн-пакет русского языка</Text></View>
+        <Switch accessibilityLabel="Распознавать только на устройстве" value={voice.onDeviceOnly} onValueChange={voice.setOnDeviceOnly} disabled={voice.active}
+          trackColor={{false:'#B4BBC9',true:'#B4AAF5'}} thumbColor={voice.onDeviceOnly?C.purple:'#FFFFFF'}/>
+      </View>:null}
+      <Text style={styles.muted}>Приложение не сохраняет и не отправляет аудио в Thoughts API. Системный распознаватель может использовать сервис производителя.</Text>
+    </View>
     <View style={styles.settingsCard}>
       <Text style={styles.settingsTitle}>Где хранить мысли?</Text>
       <Text style={styles.muted}>Можно переключаться между собственным backend и Notion. Данные автоматически не мигрируют.</Text>
@@ -391,6 +427,18 @@ export default function App() {
       </ScrollView>
     </View>
 
+    <Modal visible={showProjectPicker} transparent animationType="slide" onRequestClose={()=>setShowProjectPicker(false)}>
+      <View style={styles.projectOverlay}>
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={()=>setShowProjectPicker(false)}/>
+        <View style={styles.projectSheet}>
+          <Text style={styles.settingsTitle}>Проект для мысли</Text>
+          {[{id:null,name:'Авто — AI выберет сам'},...projects.map(p=>({id:p.id,name:p.name}))].map(p=>
+            <Pressable key={p.id||'auto'} style={styles.projectOption} onPress={()=>{setDraftProject(p.id);setShowProjectPicker(false);}}>
+              <Ionicons name={draftProject===p.id?'radio-button-on':'radio-button-off'} size={20} color={draftProject===p.id?C.purple:C.muted}/><Text style={{color:C.ink,fontSize:15}}>{p.name}</Text>
+            </Pressable>)}
+        </View>
+      </View>
+    </Modal>
     <Modal visible={projectModal} transparent animationType="fade" onRequestClose={()=>setProjectModal(false)}>
       <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={styles.modalOverlay}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalScroll}>
         <View style={styles.modalCard}>
@@ -444,11 +492,11 @@ const styles = StyleSheet.create({
   sideFooterText:{fontSize:11,color:C.muted},sideFooterSmall:{fontSize:10,color:C.light},main:{flex:1,minWidth:0},
   mobileHeader:{position:'absolute',top:0,left:0,right:0,zIndex:2,height:76,backgroundColor:C.white,paddingTop:Platform.OS==='android'?28:Platform.OS==='ios'?35:12,paddingHorizontal:20,flexDirection:'row',justifyContent:'space-between',alignItems:'center',borderBottomWidth:1,borderBottomColor:C.line},
   topSettings:{padding:6},mobileTabs:{marginTop:76,flexDirection:'row',gap:5,paddingHorizontal:12,paddingVertical:9,backgroundColor:C.white,borderBottomWidth:1,borderBottomColor:C.line,flexWrap:'wrap'},
-  pageContent:{gap:17},greeting:{gap:10,marginBottom:5},eyebrow:{fontSize:10,letterSpacing:2,color:C.purple,fontWeight:'800'},
+  pageContent:{gap:14},greeting:{gap:10,marginBottom:5},eyebrow:{fontSize:10,letterSpacing:2,color:C.purple,fontWeight:'800'},
   title:{fontSize:31,lineHeight:39,color:C.ink,fontWeight:'800',letterSpacing:-1.3},subtitle:{fontSize:14,color:C.muted,lineHeight:23},
   composer:{backgroundColor:C.white,borderColor:'#DBDDFC',borderWidth:1,borderRadius:18,padding:18,shadowColor:'#9993F1',shadowOpacity:.08,shadowRadius:14,shadowOffset:{width:0,height:5},elevation:2},
   composerTop:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:5},smallMuted:{color:C.light,fontSize:11},
-  composerInput:{minHeight:112,maxHeight:225,paddingTop:18,paddingBottom:14,fontSize:15,color:C.ink,lineHeight:23,outlineStyle:'none'} as any,
+  composerInput:{flex:1,minHeight:105,maxHeight:220,paddingTop:8,paddingBottom:12,fontSize:16,color:C.ink,lineHeight:24,outlineStyle:'none'} as any,
   composerDivider:{height:1,backgroundColor:C.line,marginBottom:12},composerBottom:{flexDirection:'row',gap:12,alignItems:'center'},
   voiceRow:{flexDirection:'row',alignItems:'center',gap:12,marginBottom:8},voiceButton:{paddingVertical:9,paddingHorizontal:13,borderRadius:9,backgroundColor:C.pale},voiceButtonActive:{backgroundColor:'#FFF0F1'},voiceState:{fontSize:12,color:C.muted},voiceError:{fontSize:12,color:C.red,marginBottom:6},voicePrivacy:{fontSize:11,color:C.muted,lineHeight:17,marginBottom:8},
   metrics:{flexDirection:'row',gap:10,marginVertical:2},metricCard:{flex:1,backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:13,paddingHorizontal:18,paddingVertical:16},
@@ -480,5 +528,21 @@ const styles = StyleSheet.create({
   banner:{borderRadius:10,paddingHorizontal:14,paddingVertical:12,flexDirection:'row',gap:10,alignItems:'center',marginBottom:16},
   modalOverlay:{flex:1,backgroundColor:'rgba(24,29,50,.43)',justifyContent:'center',alignItems:'center',paddingHorizontal:14},modalScroll:{flexGrow:1,width:'100%',justifyContent:'center',alignItems:'center',paddingVertical:24},
   modalCard:{backgroundColor:C.white,borderRadius:18,width:'100%',maxWidth:570,padding:23,gap:8},modalHead:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:10},close:{fontSize:19,color:C.muted,padding:5},
+  inputAndMic:{flexDirection:'row',gap:10,alignItems:'flex-end'},
+  micFab:{width:58,height:58,borderRadius:29,backgroundColor:C.purple,alignItems:'center',justifyContent:'center',marginBottom:6},
+  micFabActive:{backgroundColor:C.red},
+  recordingRow:{flexDirection:'row',alignItems:'center',gap:8,minHeight:48},
+  recordingDot:{width:9,height:9,borderRadius:5,backgroundColor:C.red},
+  stopAction:{minHeight:44,justifyContent:'center',paddingHorizontal:8},
+  projectSelect:{flex:1,minWidth:0,minHeight:48,flexDirection:'row',alignItems:'center',gap:6},
+  saveAction:{backgroundColor:C.purple,minHeight:48,borderRadius:12,paddingHorizontal:13,flexDirection:'row',alignItems:'center',gap:6},
+  saveDisabled:{backgroundColor:'#A3A9B6'},
+  voiceInfo:{minHeight:32,flexDirection:'row',alignItems:'center',gap:6,alignSelf:'flex-start'},
+  voiceSwitchRow:{flexDirection:'row',alignItems:'center',gap:12,minHeight:52},
+  emptyWelcome:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:16,padding:20,alignItems:'center',gap:10},
+  exampleRow:{alignSelf:'stretch',minHeight:46,borderWidth:1,borderColor:C.line,borderRadius:12,paddingHorizontal:14,justifyContent:'center'},
+  projectOverlay:{flex:1,backgroundColor:'rgba(24,29,50,.43)',justifyContent:'flex-end'},
+  projectSheet:{backgroundColor:C.white,borderTopLeftRadius:22,borderTopRightRadius:22,paddingHorizontal:22,paddingTop:22,paddingBottom:46,gap:8},
+  projectOption:{minHeight:52,flexDirection:'row',alignItems:'center',gap:12,borderBottomWidth:1,borderBottomColor:C.line},
   colorChoice:{width:28,height:28,borderRadius:14,borderWidth:2,borderColor:'transparent'}
 });
