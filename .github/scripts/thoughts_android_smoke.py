@@ -28,6 +28,14 @@ def find(label, contains=False, timeout=30):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         tree = hierarchy()
+        # The freshly booted Google image can show a Pixel Launcher ANR while
+        # initializing its home screen. Dismiss only this named system-app dialog;
+        # a Thoughts ANR or crash must still fail the test.
+        if any(n.get('text') == "Pixel Launcher isn't responding" for n in tree.iter('node')):
+            close = next(n for n in tree.iter('node') if n.get('text') == 'Close app')
+            x1, y1, x2, y2 = bounds(close)
+            adb('shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2))
+            continue
         # Explicit accessibility labels identify tabs/actions even when a heading
         # on the same screen has identical text.
         nodes = list(tree.iter("node"))
@@ -57,7 +65,7 @@ def capture(name):
 
 def launch():
     adb("shell", "am", "force-stop", PACKAGE)
-    adb("shell", "monkey", "-p", PACKAGE, "-c", "android.intent.category.LAUNCHER", "1")
+    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/.MainActivity")
 
 
 def check_bottom_navigation():
