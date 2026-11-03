@@ -3,9 +3,9 @@
     "name": "Thoughts",
     "slug": "thoughts-ai-inbox",
     "scheme": "thoughts",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "backgroundColor": "#F6F7FB",
     "ios": {
       "supportsTablet": true
@@ -35,13 +35,21 @@
         }
       ],
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-sqlite",
+      "expo-background-task"
     ],
-    "runtimeVersion": "0.2.0",
+    "runtimeVersion": "0.3.0",
     "updates": {
       "enabled": false,
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
+    },
+    "owner": "tminwws-team",
+    "extra": {
+      "eas": {
+        "projectId": "5fd4e492-7922-4f9e-83e4-a6c9e8062dc2"
+      }
     }
   }
 }

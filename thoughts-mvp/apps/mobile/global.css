@@ -3,11 +3,11 @@
 
 /* Semantic color tokens shared by Android, iOS and web. */
 @layer theme {
-  :where(.light, .light *) {
-    --background: 246 247 251;
-    --foreground: 30 36 66;
+  :where(.light) {
+    --background: 245 246 251;
+    --foreground: 31 32 59;
     --card: 255 255 255;
-    --primary: 98 89 232;
+    --primary: 91 79 224;
     --primary-foreground: 255 255 255;
     --secondary: 240 239 255;
     --secondary-foreground: 98 89 232;
@@ -17,13 +17,16 @@
     --accent-foreground: 98 89 232;
     --border: 231 233 242;
     --input: 231 233 242;
-    --destructive: 199 80 88;
+    --destructive: 190 48 46;
+    --warning: 255 241 201;
+    --warning-foreground: 106 68 6;
+    --success: 16 117 83;
   }
-  :where(.dark, .dark *) {
-    --background: 19 23 42;
+  :where(.dark) {
+    --background: 18 18 31;
     --foreground: 240 242 251;
-    --card: 30 34 56;
-    --primary: 151 144 250;
+    --card: 28 28 47;
+    --primary: 138 128 255;
     --primary-foreground: 19 23 42;
     --secondary: 49 45 92;
     --secondary-foreground: 221 219 255;
@@ -33,7 +36,10 @@
     --accent-foreground: 221 219 255;
     --border: 59 63 87;
     --input: 59 63 87;
-    --destructive: 247 122 131;
+    --destructive: 255 138 125;
+    --warning: 61 45 11;
+    --warning-foreground: 255 215 135;
+    --success: 101 214 173;
   }
 }
 @theme inline {
@@ -50,5 +56,8 @@
   --color-accent-foreground: rgb(var(--accent-foreground));
   --color-border: rgb(var(--border));
   --color-input: rgb(var(--input));
+  --color-warning: rgb(var(--warning));
+  --color-warning-foreground: rgb(var(--warning-foreground));
+  --color-success: rgb(var(--success));
   --color-destructive: rgb(var(--destructive));
 }
