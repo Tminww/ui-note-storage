@@ -116,6 +116,7 @@ export function Toggle({
                 onValueChange={onChange}
                 trackColor={{ true: primary.backgroundColor as string }}
                 thumbColor={thumb.color as string}
+                {...(Platform.OS === 'web' ? { activeThumbColor: thumb.color as string } : {})}
             />
         </Box>
     )

@@ -7,11 +7,21 @@ test('manual review cancels pending enrichment until explicitly requested', asyn
     const t = await a.createThought('Test', null)
     await a.updateThought(t.id, { category: 'task', status: 'ready' })
     let calls = 0
-    await a.flush({ enrich: async () => { calls++; return enriched } })
+    await a.flush({
+        enrich: async () => {
+            calls++
+            return enriched
+        }
+    })
     assert.equal(calls, 0)
     assert.equal((await a.thoughts())[0].category, 'task')
     await a.processThought(t.id)
-    await a.flush({ enrich: async () => { calls++; return enriched } })
+    await a.flush({
+        enrich: async () => {
+            calls++
+            return enriched
+        }
+    })
     assert.equal(calls, 1)
 })
 

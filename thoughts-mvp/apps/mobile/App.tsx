@@ -696,42 +696,46 @@ function ThoughtsApp() {
                         onError={setError}
                     />
                 )}
-                <SafeAreaView edges={['bottom']} className="border-t border-border bg-card">
-                    <Box className="flex-row">
-                        {(
-                            [
-                                { id: 'thoughts', name: 'Мысли', icon: 'list-outline' },
-                                { id: 'projects', name: 'Проекты', icon: 'folder-outline' },
-                                { id: 'ai', name: 'AI', icon: 'sparkles-outline' },
-                                { id: 'settings', name: 'Настройки', icon: 'settings-outline' }
-                            ] as const
-                        ).map((tab) => (
-                            <Pressable
-                                key={tab.id}
-                                accessibilityRole="tab"
-                                accessibilityLabel={tab.name}
-                                accessibilityState={{ selected: page === tab.id }}
-                                onPress={() => {
-                                    setPage(tab.id)
-                                    if (tab.id === 'settings') setSection('home')
-                                }}
-                                className="min-h-18 flex-1 items-center justify-center gap-1 py-3"
-                            >
-                                <Icon
-                                    name={tab.icon}
-                                    tone={
-                                        page === tab.id ? 'text-primary' : 'text-muted-foreground'
-                                    }
-                                />
-                                <Text
-                                    className={`text-xs ${page === tab.id ? 'font-semibold text-primary' : 'text-muted-foreground'}`}
+                {page !== 'settings' || section === 'home' ? (
+                    <SafeAreaView edges={['bottom']} className="border-t border-border bg-card">
+                        <Box className="flex-row">
+                            {(
+                                [
+                                    { id: 'thoughts', name: 'Мысли', icon: 'list-outline' },
+                                    { id: 'projects', name: 'Проекты', icon: 'folder-outline' },
+                                    { id: 'ai', name: 'AI', icon: 'sparkles-outline' },
+                                    { id: 'settings', name: 'Настройки', icon: 'settings-outline' }
+                                ] as const
+                            ).map((tab) => (
+                                <Pressable
+                                    key={tab.id}
+                                    accessibilityRole="tab"
+                                    accessibilityLabel={tab.name}
+                                    accessibilityState={{ selected: page === tab.id }}
+                                    onPress={() => {
+                                        setPage(tab.id)
+                                        if (tab.id === 'settings') setSection('home')
+                                    }}
+                                    className="min-h-18 flex-1 items-center justify-center gap-1 py-3"
                                 >
-                                    {tab.name}
-                                </Text>
-                            </Pressable>
-                        ))}
-                    </Box>
-                </SafeAreaView>
+                                    <Icon
+                                        name={tab.icon}
+                                        tone={
+                                            page === tab.id
+                                                ? 'text-primary'
+                                                : 'text-muted-foreground'
+                                        }
+                                    />
+                                    <Text
+                                        className={`text-xs ${page === tab.id ? 'font-semibold text-primary' : 'text-muted-foreground'}`}
+                                    >
+                                        {tab.name}
+                                    </Text>
+                                </Pressable>
+                            ))}
+                        </Box>
+                    </SafeAreaView>
+                ) : null}
             </KeyboardAvoidingView>
             <Sheet visible={picker} title="Проект для мысли" onClose={() => setPicker(false)}>
                 {[{ id: null, name: 'Авто — AI выберет сам' }, ...projects].map((p) => (
