@@ -446,7 +446,7 @@ export function SettingsScreen({
             </>
         )
     return (
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="gap-5 px-5 pb-8">
+        <ScrollView className="flex-1" keyboardShouldPersistTaps="handled" contentContainerClassName="gap-5 px-5 pb-8">
             {content}
         </ScrollView>
     )

@@ -9,7 +9,7 @@ import {
     Switch,
     TextInput
 } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView } from './safe-area'
 import { Ionicons } from '@react-native-vector-icons/ionicons'
 import { useResolveClassNames } from 'uniwind'
 import { Box, Text, Heading } from './surfaces'

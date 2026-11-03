@@ -3,7 +3,7 @@
     "name": "Thoughts",
     "slug": "thoughts-ai-inbox",
     "scheme": "thoughts",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#F6F7FB",
@@ -12,11 +12,18 @@
     },
     "android": {
       "package": "dev.thoughts.miniapp",
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/monochrome-icon.png",
+        "backgroundColor": "#5B4FE0"
+      }
     },
     "web": {
       "name": "Thoughts — AI Inbox",
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       [
@@ -50,6 +57,7 @@
       "eas": {
         "projectId": "5fd4e492-7922-4f9e-83e4-a6c9e8062dc2"
       }
-    }
+    },
+    "icon": "./assets/icon.png"
   }
 }

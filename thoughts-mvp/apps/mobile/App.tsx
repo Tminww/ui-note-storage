@@ -13,7 +13,8 @@ import {
     StatusBar,
     TextInput
 } from 'react-native'
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { SafeAreaView } from './components/ui/safe-area'
 import * as Haptics from 'expo-haptics'
 import { Box, Text, Heading } from './components/ui/surfaces'
 import { Action, Field, Icon, Info, Sheet, confirmDelete } from './components/ui/app-controls'
@@ -443,7 +444,7 @@ function ThoughtsApp() {
         )
     }
     const projectsScreen = () => (
-        <ScrollView contentContainerClassName="gap-5 px-5 pb-8">
+        <ScrollView className="flex-1" contentContainerClassName="gap-5 px-5 pb-8">
             <Text className="text-sm leading-5 text-muted-foreground">
                 Чем точнее описание проекта, тем лучше AI раскладывает мысли.
             </Text>
@@ -509,7 +510,7 @@ function ThoughtsApp() {
         </ScrollView>
     )
     const aiScreen = () => (
-        <ScrollView contentContainerClassName="gap-5 px-5 pb-8">
+        <ScrollView className="flex-1" contentContainerClassName="gap-5 px-5 pb-8">
             <Info>
                 {sync.aiConfigured
                     ? 'AI обрабатывает сохранённые мысли, когда есть сеть.'
