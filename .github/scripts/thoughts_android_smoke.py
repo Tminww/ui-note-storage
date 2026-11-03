@@ -1,6 +1,7 @@
 """Exercise the signed Android APK, including native layout and offline persistence."""
 from pathlib import Path
 import re
+import base64
 import subprocess
 import sys
 import time
@@ -16,15 +17,18 @@ def adb(*args, binary=False):
 
 
 def hierarchy():
-    adb("shell", "uiautomator", "dump", "/sdcard/thoughts-ui.xml")
-    return ET.fromstring(adb("shell", "cat", "/sdcard/thoughts-ui.xml"))
+    result = adb('shell', 'am', 'instrument', '-w', 'dev.thoughts.uiprobe/.UiProbe')
+    match = re.search(r'INSTRUMENTATION_RESULT: xml=([^\s]+)', result)
+    if not match:
+        raise AssertionError('Native UI probe failed: ' + result)
+    return ET.fromstring(base64.b64decode(match.group(1)))
 
 
 def bounds(node):
     return list(map(int, re.findall(r"\d+", node.attrib["bounds"])))
 
 
-def find(label, contains=False, timeout=30):
+def find(label, contains=False, timeout=30, enabled=False):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         tree = hierarchy()
@@ -43,7 +47,7 @@ def find(label, contains=False, timeout=30):
         for node in nodes:
             values = [node.get("text", ""), node.get("content-desc", "")]
             matches = any(label in v if contains else label == v for v in values)
-            if matches:
+            if matches and (not enabled or node.get('enabled') == 'true'):
                 x1, y1, x2, y2 = bounds(node)
                 if x2 > x1 and y2 > y1:
                     return node
@@ -53,7 +57,7 @@ def find(label, contains=False, timeout=30):
 
 
 def tap(label, contains=False):
-    node = find(label, contains)
+    node = find(label, contains, enabled=True)
     x1, y1, x2, y2 = bounds(node)
     adb("shell", "input", "tap", str((x1+x2)//2), str((y1+y2)//2))
 
@@ -76,8 +80,18 @@ def check_bottom_navigation():
         assert bounds(node)[1] > height * 0.7, f"{label} navigation collapsed: {node.attrib}"
 
 
+def voice_seconds():
+    tree = hierarchy()
+    for node in tree.iter('node'):
+        match = re.fullmatch(r'Время записи (\d+):(\d+)', node.get('content-desc', ''))
+        if match:
+            return int(match.group(1)) * 60 + int(match.group(2))
+    raise AssertionError('Voice timer is not visible')
+
+
 try:
     adb("install", "-r", sys.argv[1])
+    adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.RECORD_AUDIO')
     # A fresh emulator contains only disposable test data. Keep it offline, including launch,
     # so this verifies the embedded APK rather than replacing it with an OTA bundle.
     adb("shell", "svc", "wifi", "disable")
@@ -110,6 +124,34 @@ try:
     capture("05-note-editor")
     tap("Закрыть")
 
+    tap('Начать диктовку')
+    find('Идёт запись')
+    find('Тестовая мысль', contains=True)
+    time.sleep(5)
+    before_pause = voice_seconds()
+    tap('Пауза')
+    find('Продолжить диктовку', enabled=True)
+    frozen = voice_seconds()
+    assert before_pause <= frozen <= before_pause + 4, (before_pause, frozen)
+    time.sleep(3)
+    assert voice_seconds() == frozen, 'Paused recording timer is still running'
+    capture('13-voice-paused')
+    tap('Продолжить диктовку')
+    find('Идёт запись')
+    time.sleep(2)
+    assert voice_seconds() > frozen, 'Resumed timer did not continue'
+    tap('Готово')
+    assert voice_seconds() == 0, 'Done did not reset the timer immediately'
+    find('Новая мысль')
+    find('Тестовая мысль.', contains=True)
+    capture('14-voice-transcript')
+    tap('Начать диктовку')
+    find('Идёт запись')
+    assert voice_seconds() <= 2, 'New recording inherited an earlier timer'
+    tap('Отменить диктовку')
+    find('Новая мысль')
+    find('Тестовая мысль.', contains=True)
+
     tap("AI")
     find("Ждут AI")
     check_bottom_navigation()
@@ -124,6 +166,7 @@ try:
     tap("Назад")
     tap("Оформление", contains=True)
     tap("Тёмная")
+    find('Тёмная')
     capture("09-dark-theme")
     tap("Светлая")
     capture("10-light-theme")
@@ -135,7 +178,7 @@ try:
     tap("Обновления", contains=True)
     find("Проверить обновления")
     capture("12-updates")
-    print("PASS: native layout, all tabs, project creation, note edit, offline save/relaunch, settings and themes")
+    print("PASS: native layout, all tabs, project creation, note edit, offline save/relaunch, settings and themes; voice transcription, pause/resume, stop/reset and cancel through a CI-only Android speech service")
 except Exception:
     capture("failure")
     raise

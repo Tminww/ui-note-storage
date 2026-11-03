@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import type { Project, Thought, Settings } from './api'
+import type { Project, Settings } from './api'
+import type { AIUsage, EnrichmentResult } from './localCore'
 import { readSecret } from './deviceConfig'
 import { notionMcpIsConnected, getReadOnlyNotionMcpTools, callReadOnlyMcpTool } from './notionMcp'
 const STORAGE = 'thoughts:ai-local-settings'
@@ -22,9 +23,10 @@ export async function saveLocalSettings(s: Settings) {
     await AsyncStorage.setItem(STORAGE, JSON.stringify(s))
     return s
 }
-async function openRouter(path: string, body: object) {
+async function openRouter(path: string, body: object, usage: AIUsage) {
     const key = await readSecret('openrouter')
     if (!key) throw new Error('Добавь свой OpenRouter API key в настройках.')
+    usage.requests = (usage.requests || 0) + 1
     const response = await fetch(`https://openrouter.ai/api/${path}`, {
         method: 'POST',
         headers: {
@@ -36,13 +38,24 @@ async function openRouter(path: string, body: object) {
         signal: AbortSignal.timeout(45000)
     })
     const data = await response.json().catch(() => ({}))
+    const reported = data.usage
+    if (reported && typeof reported === 'object') {
+        for (const [target, value] of [
+            ['promptTokens', reported.prompt_tokens ?? reported.input_tokens],
+            ['completionTokens', reported.completion_tokens ?? reported.output_tokens],
+            ['totalTokens', reported.total_tokens], ['costUsd', reported.cost]
+        ] as const) {
+            if (typeof value === 'number' && Number.isFinite(value) && value >= 0)
+                usage[target] = (usage[target] || 0) + value
+        }
+    }
     if (!response.ok)
         throw new Error(
             `OpenRouter ${response.status}: ${String(data.error?.message || data.message || 'Ошибка').slice(0, 180)}`
         )
     return data
 }
-async function generate(text: string, settings: Settings) {
+async function generate(text: string, settings: Settings, usage: AIUsage) {
     if (settings.generatorProvider !== 'openrouter')
         throw new Error(
             'Для автономного режима подключён только OpenRouter. Другие провайдеры будут адаптерами.'
@@ -86,7 +99,7 @@ async function generate(text: string, settings: Settings) {
             ],
             tools,
             tool_choice: 'auto'
-        })
+        }, usage)
         const msg = response.choices?.[0]?.message
         if (Array.isArray(msg?.tool_calls) && msg.tool_calls.length) {
             const calls = msg.tool_calls.slice(0, 2)
@@ -111,7 +124,7 @@ async function generate(text: string, settings: Settings) {
         max_tokens: 350,
         response_format: { type: 'json_object' },
         messages
-    })
+    }, usage)
     const raw = response.choices?.[0]?.message?.content
     let obj: any
     try {
@@ -131,7 +144,8 @@ async function classify(
     text: string,
     projects: Project[],
     lockedProjectId: string | null,
-    settings: Settings
+    settings: Settings,
+    usage: AIUsage
 ) {
     if (settings.decisionProvider === 'disabled')
         return { category: 'note' as const, projectId: lockedProjectId, confidence: null }
@@ -165,7 +179,7 @@ async function classify(
         model: settings.decisionModel,
         state: { note: text },
         questions
-    })
+    }, usage)
     const category = data.answers?.category?.choice
     if (!Object.hasOwn(criteria, category)) throw new Error('Jev не определил категорию')
     const project = data.answers?.project
@@ -187,16 +201,18 @@ export async function enrichNote(
     projects: Project[],
     lockedProjectId: string | null,
     settings: Settings
-): Promise<Partial<Thought>> {
+): Promise<EnrichmentResult> {
+    const usage: AIUsage = { requests: 0 }
     const [generated, decision] = await Promise.allSettled([
-        generate(rawText, settings),
-        classify(rawText, projects, lockedProjectId, settings)
+        generate(rawText, settings, usage),
+        classify(rawText, projects, lockedProjectId, settings, usage)
     ])
     if (generated.status === 'rejected' && decision.status === 'rejected')
-        throw new Error(
+        throw Object.assign(new Error(
             `AI: ${(generated.reason as Error).message}; Jev: ${(decision.reason as Error).message}`
-        )
-    const result: Partial<Thought> = {
+        ), { usage })
+    const result: EnrichmentResult = {
+        usage,
         status: 'ready',
         errorMessage: null,
         generatorModel: settings.generatorModel,

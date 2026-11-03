@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import './global.css'
 import {
     ActivityIndicator,
-    Animated,
     AppState,
     BackHandler,
     KeyboardAvoidingView,
@@ -76,18 +75,18 @@ function ThoughtsApp() {
     const [busy, setBusy] = useState(false)
     const [projectEditor, setProjectEditor] = useState<Partial<Project> | null>(null)
     const [editing, setEditing] = useState<Thought | null>(null)
+    const [historyId, setHistoryId] = useState<string | null>(null)
+    const [historyLimit, setHistoryLimit] = useState(20)
+    const historyEntry = state.aiHistory.find((h) => h.id === historyId)
+    const historyStatus = { started: 'Начата', success: 'Успешно', partial: 'С замечаниями', error: 'Ошибка' }
     const [voiceScreen, setVoiceScreen] = useState(false)
-    const [voiceDone, setVoiceDone] = useState(false)
-    const [seconds, setSeconds] = useState(0)
-    const [elapsed, setElapsed] = useState(0)
-    const beforeVoice = useRef('')
+    const voiceAction = useRef(0)
     const input = useRef<React.ComponentRef<typeof TextInput>>(null)
     const persistDraft = (text: string) => {
         setDraft(text)
         void localRepository.setDraft(text).catch((e) => setError(e.message))
     }
     const voice = useVoiceInput(persistDraft, state.preferences.voiceOnDevice)
-    const pulse = useRef(new Animated.Value(0.45)).current
     const projects = state.projects.filter((p) => !p.deleted)
     const thoughts = state.thoughts
         .filter((t) => !t.deleted)
@@ -132,30 +131,8 @@ function ThoughtsApp() {
         }
     }, [])
     useEffect(() => {
-        if (!voice.active) return
-        const started = Date.now()
-        const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 250)
-        const animation = Animated.loop(
-            Animated.sequence([
-                Animated.timing(pulse, { toValue: 1, duration: 550, useNativeDriver: true }),
-                Animated.timing(pulse, { toValue: 0.4, duration: 550, useNativeDriver: true })
-            ])
-        )
-        animation.start()
-        return () => {
-            clearInterval(timer)
-            animation.stop()
-        }
-    }, [voice.active, pulse])
-    useEffect(() => {
-        if (!voice.active && voiceDone) {
-            setVoiceDone(false)
-            if (!state.preferences.voiceReview && draft.trim()) void saveThought()
-        }
-    }, [voice.active, voiceDone])
-    useEffect(() => {
         const app = AppState.addEventListener('change', (value) => {
-            if (value !== 'active' && voice.active) voice.stop()
+            if (value !== 'active' && voice.nativeBusy) voice.pause()
         })
         const back = BackHandler.addEventListener('hardwareBackPress', () => {
             if (voiceScreen) {
@@ -176,14 +153,17 @@ function ThoughtsApp() {
             app.remove()
             back.remove()
         }
-    }, [voice.active, voiceScreen, page, section])
+    }, [voice.nativeBusy, voiceScreen, page, section])
     const haptic = () => {
         if (state.preferences.haptics) void Haptics.selectionAsync().catch(() => {})
     }
     async function saveThought() {
         if (!draft.trim() || busy || voice.active) return
+        await saveText(draft)
+    }
+    async function saveText(text: string) {
         await run(async () => {
-            const saved = await api.createThought(draft, draftProject)
+            const saved = await api.createThought(text, draftProject)
             setDraft('')
             setDraftProject(null)
             setUndoId(saved.id)
@@ -192,18 +172,23 @@ function ThoughtsApp() {
         })
     }
     const startVoice = () => {
-        beforeVoice.current = draft
-        setSeconds(0)
-        setElapsed(0)
+        voiceAction.current++
         setVoiceScreen(true)
         haptic()
         void voice.start(draft)
     }
     const cancelVoice = () => {
+        voiceAction.current++
         voice.cancel()
-        persistDraft(beforeVoice.current)
         setVoiceScreen(false)
-        setVoiceDone(false)
+    }
+    const finishVoice = async () => {
+        const action = ++voiceAction.current
+        const text = await voice.finish()
+        if (action !== voiceAction.current) return
+        setVoiceScreen(false)
+        if (!state.preferences.voiceReview && text.trim()) await saveText(text)
+        else input.current?.focus()
     }
     const noteCard = (t: LocalThought) => {
         const color = state.preferences.projectColors
@@ -433,7 +418,7 @@ function ThoughtsApp() {
                             accessibilityRole="button"
                             accessibilityLabel="Начать диктовку"
                             onPress={startVoice}
-                            disabled={busy}
+                            disabled={busy || voice.nativeBusy}
                             className="h-14 w-14 items-center justify-center rounded-full bg-primary"
                         >
                             <Icon name="mic-outline" size={27} tone="text-primary-foreground" />
@@ -547,6 +532,21 @@ function ThoughtsApp() {
                 </Box>
             ))}
             {review.map(noteCard)}
+            <Heading>История использования ИИ</Heading>
+            <Text className="text-sm text-muted-foreground">Последние 500 обработок · история хранится на телефоне</Text>
+            {!state.aiHistory.length ? <Info>Здесь появятся обращения к ИИ после первой обработки мысли. Без сети новые обращения не выполняются.</Info> : null}
+            {[...state.aiHistory].reverse().slice(0, historyLimit).map((entry) => (
+                <Pressable key={entry.id} accessibilityLabel={`Обработка ИИ: ${entry.inputText.slice(0, 70)}`} onPress={() => setHistoryId(entry.id)} className="gap-2 rounded-3xl border border-border bg-card p-4">
+                    <Box className="flex-row justify-between gap-3">
+                        <Text className={`text-sm font-semibold ${entry.status === 'error' ? 'text-destructive' : 'text-primary'}`}>{historyStatus[entry.status]}</Text>
+                        <Text className="text-xs text-muted-foreground">{new Date(entry.startedAt).toLocaleString('ru-RU')}</Text>
+                    </Box>
+                    <Text numberOfLines={2}>{entry.inputText}</Text>
+                    <Text className="text-xs text-muted-foreground" numberOfLines={2}>{[entry.generatorModel, entry.decisionModel].filter(Boolean).join(' · ') || 'Модель не сообщена'}</Text>
+                    <Text className="text-xs text-muted-foreground">{entry.durationMs === undefined ? 'Завершение не получено' : `${(entry.durationMs / 1000).toFixed(1)} с`}{entry.usage?.totalTokens !== undefined ? ` · ${entry.usage.totalTokens} токенов` : ''}{entry.usage?.costUsd !== undefined ? ` · $${entry.usage.costUsd.toFixed(6)}` : ''}</Text>
+                </Pressable>
+            ))}
+            {state.aiHistory.length > historyLimit ? <Action secondary onPress={() => setHistoryLimit(historyLimit + 20)}>Показать ещё</Action> : null}
         </ScrollView>
     )
     return (
@@ -738,6 +738,26 @@ function ThoughtsApp() {
                     </SafeAreaView>
                 ) : null}
             </KeyboardAvoidingView>
+            <Sheet visible={Boolean(historyEntry)} title="Обработка ИИ" onClose={() => setHistoryId(null)}>
+                {historyEntry ? <>
+                    <Info>{historyStatus[historyEntry.status]} · {new Date(historyEntry.startedAt).toLocaleString('ru-RU')}</Info>
+                    <Text className="text-sm font-semibold">Исходный текст</Text>
+                    <Text selectable>{historyEntry.inputText}</Text>
+                    <Text className="text-sm font-semibold">Модели</Text>
+                    <Text selectable>{[historyEntry.provider, historyEntry.generatorModel, historyEntry.decisionModel].filter(Boolean).join('\n') || 'Не сообщены'}</Text>
+                    {historyEntry.result ? <>
+                        <Text className="text-sm font-semibold">Ответ ИИ</Text>
+                        <Text selectable>{historyEntry.result.title}</Text>
+                        <Text selectable>{historyEntry.result.summary}</Text>
+                        <Text className="text-sm text-muted-foreground">{historyEntry.result.category ? categories[historyEntry.result.category] : ''} · {projectName(historyEntry.result.projectId || null)}</Text>
+                        {historyEntry.applied === false ? <Info warning>Ответ сохранён в истории, но не применён: мысль была изменена или удалена во время обработки.</Info> : null}
+                    </> : null}
+                    {historyEntry.error ? <Info warning>{historyEntry.error}</Info> : null}
+                    <Text className="text-sm font-semibold">Расход, сообщённый провайдером</Text>
+                    <Text>{historyEntry.usage?.requests !== undefined ? `Запросов: ${historyEntry.usage.requests}\n` : ''}{historyEntry.usage?.promptTokens !== undefined ? `Вход: ${historyEntry.usage.promptTokens} токенов\n` : ''}{historyEntry.usage?.completionTokens !== undefined ? `Выход: ${historyEntry.usage.completionTokens} токенов\n` : ''}{historyEntry.usage?.costUsd !== undefined ? `Стоимость из ответов: $${historyEntry.usage.costUsd.toFixed(6)}` : 'Стоимость не сообщена'}</Text>
+                    <Text className="text-xs text-muted-foreground">Ключи доступа и заголовки запросов в историю не записываются.</Text>
+                </> : null}
+            </Sheet>
             <Sheet visible={picker} title="Проект для мысли" onClose={() => setPicker(false)}>
                 {[{ id: null, name: 'Авто — AI выберет сам' }, ...projects].map((p) => (
                     <Pressable
@@ -933,7 +953,8 @@ function ThoughtsApp() {
             </Sheet>
             <Modal visible={voiceScreen} animationType="slide" onRequestClose={cancelVoice}>
                 <SafeAreaView className="flex-1 bg-background">
-                    <Box className="mx-auto w-full max-w-xl flex-1 gap-6 p-5">
+                    <Box className="mx-auto w-full max-w-xl flex-1 px-5 pt-5">
+                    <ScrollView className="flex-1" contentContainerClassName="gap-6 pb-4">
                         <Box className="flex-row items-center justify-between">
                             <Pressable
                                 accessibilityLabel="Отменить диктовку"
@@ -962,14 +983,14 @@ function ThoughtsApp() {
                         </Box>
                         <Box className="items-center gap-3 pt-2">
                             <Text className="font-semibold text-destructive">
-                                {voice.active ? 'Идёт запись' : 'Пауза'}
+                                {voice.phase === 'starting' ? 'Запускаем микрофон…'
+                                    : voice.recording ? 'Идёт запись'
+                                    : voice.phase === 'finishing' ? 'Завершаем диктовку…'
+                                    : voice.phase === 'error' ? 'Запись остановлена' : 'Пауза'}
                             </Text>
-                            <Text className="text-6xl font-bold">{clock(seconds + elapsed)}</Text>
+                            <Text accessibilityLabel={`Время записи ${clock(voice.seconds)}`} className="text-6xl font-bold">{clock(voice.seconds)}</Text>
                         </Box>
-                        <Animated.View
-                            style={{ opacity: pulse }}
-                            className="h-24 flex-row items-center justify-center gap-1"
-                        >
+                        <Box accessibilityLabel="Уровень звука микрофона" className="h-24 flex-row items-center justify-center gap-1">
                             {[
                                 16, 28, 44, 24, 58, 72, 46, 32, 62, 84, 52, 38, 66, 76, 42, 26, 54,
                                 68, 36, 22, 46, 58, 32, 18, 30, 20
@@ -977,10 +998,10 @@ function ThoughtsApp() {
                                 <Box
                                     key={index}
                                     className="w-1.5 rounded-full bg-primary"
-                                    style={{ height }}
+                                    style={{ height: 6 + height * voice.level }}
                                 />
                             ))}
-                        </Animated.View>
+                        </Box>
                         <Box className="gap-3 rounded-3xl border border-border bg-card p-5">
                             <Text className="text-sm font-semibold text-muted-foreground">
                                 Распознанный текст
@@ -998,40 +1019,35 @@ function ThoughtsApp() {
                                 : 'После «Готово» мысль сохранится на телефоне.'}
                         </Text>
                         {voice.error ? <Info warning>{voice.error}</Info> : null}
-                        <Box className="flex-1" />
+                        {voice.hint ? <Info>{voice.hint}</Info> : null}
+                    </ScrollView>
                         <Box className="flex-row items-end justify-around pb-4">
                             <Box className="items-center gap-2">
                                 <Pressable
                                     accessibilityLabel={
-                                        voice.active ? 'Пауза' : 'Продолжить диктовку'
+                                        voice.recording || voice.phase === 'starting' ? 'Пауза' : 'Продолжить диктовку'
                                     }
+                                    disabled={voice.phase === 'pausing' || voice.phase === 'finishing' || (voice.nativeBusy && !voice.recording && voice.phase !== 'starting')}
                                     onPress={() => {
-                                        if (voice.active) {
-                                            setElapsed(elapsed + seconds)
-                                            setSeconds(0)
-                                            voice.stop()
-                                        } else void voice.start(draft)
+                                        if (voice.recording || voice.phase === 'starting') voice.pause()
+                                        else void voice.resume()
                                     }}
                                     className="h-16 w-16 items-center justify-center rounded-full border border-border bg-card"
                                 >
                                     <Icon
-                                        name={voice.active ? 'pause' : 'play'}
+                                        name={voice.recording || voice.phase === 'starting' ? 'pause' : 'play'}
                                         tone="text-foreground"
                                     />
                                 </Pressable>
                                 <Text className="text-xs text-muted-foreground">
-                                    {voice.active ? 'Пауза' : 'Продолжить'}
+                                    {voice.recording || voice.phase === 'starting' ? 'Пауза' : 'Продолжить'}
                                 </Text>
                             </Box>
                             <Box className="items-center gap-2">
                                 <Pressable
                                     accessibilityLabel="Готово"
-                                    onPress={() => {
-                                        voice.stop()
-                                        setVoiceScreen(false)
-                                        setVoiceDone(true)
-                                        input.current?.focus()
-                                    }}
+                                    disabled={voice.phase === 'finishing'}
+                                    onPress={() => void finishVoice()}
                                     className="h-24 w-24 items-center justify-center rounded-full bg-primary"
                                 >
                                     <Icon name="stop" size={28} tone="text-primary-foreground" />

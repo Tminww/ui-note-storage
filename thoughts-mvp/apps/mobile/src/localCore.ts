@@ -22,12 +22,32 @@ export type LocalThought = Thought & {
     retryAt: number
     notion: Record<string, RemoteLink>
 }
+export type AIUsage = { requests?: number; promptTokens?: number; completionTokens?: number; totalTokens?: number; costUsd?: number }
+export type EnrichmentResult = Partial<Thought> & { usage?: AIUsage }
+export type AIHistoryEntry = {
+    id: string
+    thoughtId: string
+    revision: number
+    startedAt: string
+    finishedAt?: string
+    durationMs?: number
+    status: 'started' | 'success' | 'partial' | 'error'
+    provider?: string
+    generatorModel?: string | null
+    decisionModel?: string | null
+    inputText: string
+    result?: Partial<Pick<Thought, 'title' | 'summary' | 'category' | 'projectId' | 'confidence' | 'tags'>>
+    error?: string
+    applied?: boolean
+    usage?: AIUsage
+}
 export type LocalState = {
     version: 1
     projects: LocalProject[]
     thoughts: LocalThought[]
     draft: string
     preferences: Preferences
+    aiHistory: AIHistoryEntry[]
 }
 export type DocumentStorage = {
     load: () => Promise<string | null>
@@ -37,7 +57,8 @@ export class LocalConflictError extends Error {
     readonly code = 'LOCAL_CONFLICT'
 }
 export type SyncAdapters = {
-    enrich?: (thought: Thought, projects: Project[]) => Promise<Partial<Thought>>
+    enrich?: (thought: Thought, projects: Project[]) => Promise<EnrichmentResult>
+    aiModels?: { provider: string; generatorModel: string; decisionModel: string }
     notion?: {
         root: string
         project: (project: LocalProject, remoteId?: string) => Promise<string>
@@ -50,10 +71,24 @@ export type SyncAdapters = {
     }
 }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value))
+const historyError = (message: string) => message
+    .replace(/Bearer\s+[^\s"',;]+/gi, 'Bearer [скрыто]')
+    .replace(/\b(?:sk-|ntn_|secret_)[\w-]+/g, '[ключ скрыт]')
+    .slice(0, 500)
+const historyUsage = (raw: unknown): AIUsage | undefined => {
+    if (typeof raw !== 'object' || raw === null) return undefined
+    const safe: AIUsage = {}
+    for (const key of ['requests', 'promptTokens', 'completionTokens', 'totalTokens', 'costUsd'] as const) {
+        const value = (raw as Record<string, unknown>)[key]
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) safe[key] = value
+    }
+    return Object.keys(safe).length ? safe : undefined
+}
 const initial = (): LocalState => ({
     version: 1,
     projects: [],
     thoughts: [],
+    aiHistory: [],
     draft: '',
     preferences: {
         theme: 'system',
@@ -89,7 +124,7 @@ export function createLocalRepository(
                     'Не удалось прочитать локальную базу. Данные сохранены, база не перезаписана.'
                 )
             }
-            state = { ...saved, preferences: { ...initial().preferences, ...saved.preferences } }
+            state = { ...saved, aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
         }
     }
     const initialize = () => (initialized ??= read())
@@ -407,6 +442,14 @@ export function createLocalRepository(
                         adapters.enrich
                     ) {
                         const captured = clone(current)
+                        const historyId = id()
+                        const startedAt = now()
+                        await mutate((s) => {
+                            s.aiHistory.push({ id: historyId, thoughtId: captured.id, revision: captured.revision,
+                                startedAt: new Date(startedAt).toISOString(), status: 'started',
+                                inputText: captured.rawText, ...adapters.aiModels })
+                            s.aiHistory = s.aiHistory.slice(-500)
+                        })
                         try {
                             const result = await adapters.enrich(
                                 captured,
@@ -414,6 +457,18 @@ export function createLocalRepository(
                             )
                             await mutate((s) => {
                                 const t = s.thoughts.find((t) => t.id === captured.id)!
+                                const history = s.aiHistory.find((h) => h.id === historyId)
+                                if (history) Object.assign(history, {
+                                    finishedAt: stamp(), durationMs: Math.max(0, now() - startedAt),
+                                    status: result.errorMessage ? 'partial' : 'success',
+                                    generatorModel: result.generatorModel ?? adapters.aiModels?.generatorModel,
+                                    decisionModel: result.decisionModel ?? adapters.aiModels?.decisionModel,
+                                    usage: historyUsage(result.usage),
+                                    error: result.errorMessage ? historyError(result.errorMessage) : undefined,
+                                    applied: !t.deleted && t.revision === captured.revision,
+                                    result: { title: result.title, summary: result.summary, category: result.category,
+                                        projectId: result.projectId, confidence: result.confidence, tags: result.tags }
+                                })
                                 if (t.deleted || t.revision !== captured.revision) return
                                 for (const key of [
                                     'title',
@@ -446,6 +501,12 @@ export function createLocalRepository(
                         } catch (error) {
                             await mutate((s) => {
                                 const t = s.thoughts.find((t) => t.id === captured.id)!
+                                const history = s.aiHistory.find((h) => h.id === historyId)
+                                if (history) Object.assign(history, {
+                                    finishedAt: stamp(), durationMs: Math.max(0, now() - startedAt), status: 'error',
+                                    applied: false, error: historyError(error instanceof Error ? error.message : String(error)),
+                                    usage: historyUsage(typeof error === 'object' && error !== null ? (error as { usage?: AIUsage }).usage : undefined)
+                                })
                                 if (t.deleted || t.revision !== captured.revision) return
                                 t.errorMessage =
                                     error instanceof Error ? error.message : String(error)

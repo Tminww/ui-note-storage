@@ -1,127 +1,73 @@
-/**
- * Speech is captured by the OS / browser speech recognizer, never by the API.
- * We only receive string transcripts. Never create an audio file and never
- * upload audio. The recognizer itself MAY use its vendor's cloud service.
- */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Platform } from 'react-native'
-import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from 'expo-speech-recognition'
-
-export type VoiceState = 'idle' | 'starting' | 'listening' | 'stopping'
+/** Audio is handled by the system recognizer; Thoughts stores only its transcript. */
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { AppState, Platform } from 'react-native'
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent, type ExpoSpeechRecognitionOptions } from 'expo-speech-recognition'
+import { createVoiceSession } from './voiceSession'
 
 export function useVoiceInput(onText: (nextText: string) => void, onDeviceOnly = false) {
-    const [state, setState] = useState<VoiceState>('idle')
-    const [error, setError] = useState('')
-    const initialText = useRef('')
-    const handler = useRef(onText)
-    const attempted = useRef(false)
-    const voiceState = useRef<VoiceState>('idle')
-    useEffect(() => {
-        handler.current = onText
-    }, [onText])
-    const changeState = (value: VoiceState) => {
-        voiceState.current = value
-        setState(value)
-    }
-
-    useSpeechRecognitionEvent('start', () => changeState('listening'))
-    useSpeechRecognitionEvent('end', () => changeState('idle'))
-    useSpeechRecognitionEvent('result', (event) => {
-        if (!attempted.current) return
-        // Results represent the current utterance. Interim text is replaced by
-        // the final transcript, so interim fragments are not duplicated.
-        const transcript = event.results
-            .map((result) => result.transcript)
-            .filter(Boolean)
-            .join(' ')
-            .trim()
-        if (!transcript) return
-        handler.current(initialText.current ? `${initialText.current}\n${transcript}` : transcript)
-    })
-    useSpeechRecognitionEvent('error', (event) => {
-        changeState('idle')
-        if (event.error !== 'aborted')
-            setError(
-                `Не удалось распознать речь: ${event.message || event.error}. Можно ввести текст вручную.`
-            )
-    })
-    useEffect(
-        () => () => {
-            // Leave no active microphone when this screen is unmounted.
-            if (attempted.current) {
-                try {
-                    ExpoSpeechRecognitionModule.abort()
-                } catch {
-                    /* already stopped */
-                }
-            }
-        },
-        []
-    )
-
-    const start = useCallback(
-        async (existingText: string) => {
-            if (voiceState.current !== 'idle') return
-            setError('')
-            if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
-                setError(
-                    'Распознавание речи недоступно в этом браузере или на устройстве. Попробуй Chrome, Safari либо мобильную сборку.'
-                )
-                return
-            }
-            try {
-                changeState('starting')
-                initialText.current = existingText.trimEnd()
+    const [{ session, configure }] = useState(() => {
+        let options: ExpoSpeechRecognitionOptions
+        let handleText = (_text: string) => {}
+        let deviceOnly = false
+        const session = createVoiceSession({
+            async prepare() {
+                if (!ExpoSpeechRecognitionModule.isRecognitionAvailable())
+                    throw new Error('На устройстве недоступна служба распознавания речи. Включи системный голосовой ввод в настройках.')
                 const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync()
-                if ((voiceState.current as VoiceState) !== 'starting') return
-                if (!permission.granted) {
-                    changeState('idle')
-                    setError(
-                        'Доступ к микрофону не предоставлен. Разреши его в настройках и попробуй ещё раз.'
-                    )
-                    return
-                }
-                initialText.current = existingText.trimEnd()
-                attempted.current = true
-                ExpoSpeechRecognitionModule.start({
+                if (!permission.granted)
+                    throw new Error('Нет доступа к микрофону. Разреши его для Thoughts в настройках устройства.')
+                if (AppState.currentState && AppState.currentState !== 'active')
+                    throw new Error('Вернись в Thoughts и повтори запуск микрофона.')
+                if (deviceOnly && Platform.OS !== 'web' && !ExpoSpeechRecognitionModule.supportsOnDeviceRecognition())
+                    throw new Error('Распознавание на устройстве недоступно. Выключи «Только на устройстве» в настройках голоса или установи русский офлайн-пакет.')
+                options = {
                     lang: 'ru-RU',
                     interimResults: true,
-                    continuous: false,
+                    // Use the standard Android microphone path across vendors and
+                    // OS versions; restart after each phrase's native end callback.
+                    continuous: Platform.OS !== 'android',
                     maxAlternatives: 1,
-                    addsPunctuation: true,
-                    ...(Platform.OS !== 'web' ? { requiresOnDeviceRecognition: onDeviceOnly } : {}),
-                    // Explicitly prevent persisting audio even locally.
+                    // Android punctuation is reliably supported only on-device.
+                    addsPunctuation: Platform.OS === 'ios' || deviceOnly,
+                    ...(Platform.OS !== 'web' ? { requiresOnDeviceRecognition: deviceOnly } : {}),
+                    volumeChangeEventOptions: { enabled: true, intervalMillis: 150 },
                     recordingOptions: { persist: false }
-                })
-            } catch (e) {
-                changeState('idle')
-                setError(`Не удалось запустить микрофон: ${(e as Error).message}`)
-            }
-        },
-        [onDeviceOnly]
-    )
-
-    const stop = useCallback(() => {
-        if (voiceState.current !== 'starting' && voiceState.current !== 'listening') return
-        changeState('stopping')
-        try {
-            ExpoSpeechRecognitionModule.stop()
-        } catch (e) {
-            changeState('idle')
-            setError((e as Error).message)
-        }
-    }, [])
-
-    const active = state !== 'idle'
-    const cancel = useCallback(() => {
-        attempted.current = false
-        try {
-            ExpoSpeechRecognitionModule.abort()
-        } catch {
-            /* already stopped */
-        }
-        changeState('idle')
-        handler.current(initialText.current)
-    }, [])
-    return { state, active, error, start, stop, cancel }
+                }
+            },
+            start: () => ExpoSpeechRecognitionModule.start(options),
+            stop: () => ExpoSpeechRecognitionModule.stop(),
+            abort: () => { try { ExpoSpeechRecognitionModule.abort() } catch { /* already ended */ } }
+        }, (text) => handleText(text))
+        return { session, configure(handler: (text: string) => void, onDevice: boolean) { handleText = handler; deviceOnly = onDevice } }
+    })
+    useEffect(() => { configure(onText, onDeviceOnly) }, [configure, onText, onDeviceOnly])
+    const snapshot = useSyncExternalStore(session.subscribe, session.snapshot, session.snapshot)
+    useSpeechRecognitionEvent('start', session.onStart)
+    useSpeechRecognitionEvent('end', session.onEnd)
+    useSpeechRecognitionEvent('audioend', session.onAudioEnd)
+    useSpeechRecognitionEvent('result', session.onResult)
+    useSpeechRecognitionEvent('volumechange', ({ value }) => session.onVolume(value))
+    useSpeechRecognitionEvent('error', (event) => {
+        const message = event.error === 'not-allowed'
+            ? 'Доступ к микрофону запрещён. Разреши его для Thoughts в настройках устройства.'
+            : event.error === 'language-not-supported'
+              ? 'Русский язык недоступен в выбранной службе. Установи русский пакет или выключи «Только на устройстве».'
+              : event.error === 'network'
+                ? 'Служба распознавания не подключилась к сети. Проверь интернет или используй установленный русский офлайн-пакет.'
+                : event.error === 'no-speech' || event.error === 'speech-timeout'
+                  ? 'Речь не распознана. Попробуй ещё раз и проверь, что микрофон слышит голос.'
+                  : `Системное распознавание: ${event.message || event.error}`
+        session.onError(message, event.error === 'aborted')
+    })
+    useEffect(() => {
+        const timer = setInterval(session.tick, 150)
+        return () => { clearInterval(timer); session.dispose() }
+    }, [session])
+    return {
+        ...snapshot,
+        active: ['starting', 'listening', 'pausing', 'finishing'].includes(snapshot.phase),
+        recording: snapshot.phase === 'listening',
+        start: session.start, resume: session.resume, pause: session.pause,
+        finish: session.finish, cancel: session.cancel
+    }
 }

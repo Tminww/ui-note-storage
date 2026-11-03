@@ -1,12 +1,12 @@
 import { AppState } from 'react-native'
 import NetInfo from '@react-native-community/netinfo'
 import * as Crypto from 'expo-crypto'
-import { createLocalRepository, type SyncAdapters } from './localCore'
+import { createLocalRepository, type SyncAdapters, type EnrichmentResult } from './localCore'
 import { localDocument } from './localDocument'
 import { enrichNote, localSettings, saveLocalSettings } from './onDeviceAI'
 import { createNotionSyncAdapter, getProjects, getThoughts } from './notionStorage'
 import { getNotionRoot, hasSecret } from './deviceConfig'
-import { getApiUrl, request, serverApi, type AIConfig, type Thought } from './api'
+import { getApiUrl, request, serverApi, type AIConfig } from './api'
 
 export const localRepository = createLocalRepository(localDocument, () => Crypto.randomUUID())
 type SyncStatus = {
@@ -53,9 +53,10 @@ export function syncLocalData() {
         if (!status.online) return
         publish({ syncing: true, error: '' })
         const adapters: SyncAdapters = {}
-        if (aiConfigured)
+        if (aiConfigured) {
+            const settings = await localSettings()
+            adapters.aiModels = { provider: hasAI ? 'openrouter' : 'server', generatorModel: settings.generatorModel, decisionModel: settings.decisionProvider === 'disabled' ? 'disabled' : settings.decisionModel }
             adapters.enrich = async (thought, projects) => {
-                const settings = await localSettings()
                 if (hasAI)
                     return enrichNote(
                         thought.rawText,
@@ -63,7 +64,7 @@ export function syncLocalData() {
                         thought.projectLocked ? thought.projectId : null,
                         settings
                     )
-                return request<Partial<Thought>>('/enrich', {
+                return request<EnrichmentResult>('/enrich', {
                     method: 'POST',
                     body: JSON.stringify({
                         rawText: thought.rawText,
@@ -73,6 +74,7 @@ export function syncLocalData() {
                     })
                 })
             }
+        }
         if (notionConfigured) {
             try {
                 const root = getNotionRoot()

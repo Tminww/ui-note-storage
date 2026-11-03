@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
 
-async function ai(categoryConfidence, projectConfidence) {
+async function ai(categoryConfidence, projectConfidence, usage) {
     const request = async (url) =>
         new Response(
             JSON.stringify(
@@ -30,7 +30,10 @@ async function ai(categoryConfidence, projectConfidence) {
             ),
             { status: 200 }
         )
-    globalThis.__aiFixture = { request }
+    globalThis.__aiFixture = { request: async (url) => {
+        const response = await request(url)
+        return usage ? new Response(JSON.stringify({ ...await response.json(), usage }), { status: 200 }) : response
+    } }
     const source = stripTypeScriptTypes(
         readFileSync(new URL('../src/onDeviceAI.ts', import.meta.url), 'utf8')
     ).replace(/^import .*$/gm, '')
@@ -68,4 +71,13 @@ test('confident classification produces a ready note in the selected project', a
     assert.equal(result.status, 'ready')
     assert.equal(result.projectId, 'project')
     assert.equal(result.title, 'Title')
+})
+
+test('usage aggregates generator and classifier responses without inventing missing costs', async () => {
+    const m = await ai(0.95, 0.92, { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost: 0.001 })
+    const result = await m.enrichNote('Text', projects, null, settings)
+    assert.deepEqual(result.usage, { requests: 2, promptTokens: 20, completionTokens: 4, totalTokens: 24, costUsd: 0.002 })
+    const unknown = await ai(0.95, 0.92)
+    const noUsage = await unknown.enrichNote('Text', projects, null, settings)
+    assert.deepEqual(noUsage.usage, { requests: 2 })
 })

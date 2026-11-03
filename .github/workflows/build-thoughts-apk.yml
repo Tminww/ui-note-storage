@@ -15,6 +15,8 @@ on:
             - 'thoughts-mvp/package-lock.json'
             - '.github/workflows/build-thoughts-apk.yml'
             - '.github/scripts/thoughts_android_smoke.py'
+            - '.github/scripts/build-voice-fixture.sh'
+            - '.github/scripts/voice-fixture/**'
     workflow_dispatch:
         inputs:
             apk_run_id:
@@ -132,7 +134,9 @@ jobs:
                   arch: x86_64
                   profile: pixel_6
                   disable-animations: true
-                  script: python3 .github/scripts/thoughts_android_smoke.py apk/app-release.apk
+                  script: |
+                      bash .github/scripts/build-voice-fixture.sh
+                      python3 .github/scripts/thoughts_android_smoke.py apk/app-release.apk
             - name: Save native screenshots and logs
               if: always()
               uses: actions/upload-artifact@v4
