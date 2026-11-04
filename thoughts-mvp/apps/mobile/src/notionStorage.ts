@@ -200,12 +200,15 @@ async function archivePage(id: string) {
     await notion(`/pages/${id}`, 'PATCH', { archived: true })
 }
 
-export async function getProjects(): Promise<Project[]> {
-    const top = await children(root())
+export async function getProjects(
+    destinationRoot = root(),
+    loadBlocks = getPageBlocks
+): Promise<Project[]> {
+    const top = await loadBlocks(destinationRoot)
     const rows = top.filter((b) => b.type === 'child_page' && title(b).startsWith(PREFIX_PROJECT))
     const result = await Promise.all(
         rows.map(async (b) => {
-            const meta = await parseMeta<Partial<Project>>(await getPageBlocks(b.id))
+            const meta = await parseMeta<Partial<Project>>(await loadBlocks(b.id))
             return {
                 id: b.id,
                 localId: meta?.localId,
@@ -282,22 +285,36 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
         updatedAt: meta.updatedAt || b.last_edited_time || now()
     }
 }
-async function inFolder(id: string): Promise<Thought[]> {
-    const blocks = await children(id)
+async function inFolder(id: string, loadBlocks: typeof getPageBlocks): Promise<Thought[]> {
+    const blocks = await loadBlocks(id)
     const notes = blocks.filter(
         (b) => b.type === 'child_page' && title(b).startsWith(PREFIX_THOUGHT)
     )
     return Promise.all(
         notes.map(async (b) =>
-            thoughtFrom(b, (await parseMeta<Partial<Thought>>(await getPageBlocks(b.id))) || {})
+            thoughtFrom(b, (await parseMeta<Partial<Thought>>(await loadBlocks(b.id))) || {})
         )
     )
 }
+export async function getNotionSnapshot() {
+    const destinationRoot = root()
+    const pending = new Map<string, ReturnType<typeof getPageBlocks>>()
+    const loadBlocks = (pageId: string) => {
+        const cached = pending.get(pageId)
+        if (cached) return cached
+        const blocks = getPageBlocks(pageId)
+        pending.set(pageId, blocks)
+        return blocks
+    }
+    const projects = await getProjects(destinationRoot, loadBlocks)
+    const folders = [destinationRoot, ...projects.map((project) => project.id)]
+    const thoughts = (await Promise.all(folders.map((id) => inFolder(id, loadBlocks))))
+        .flat()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return { root: destinationRoot, projects, thoughts }
+}
 export async function getThoughts(): Promise<Thought[]> {
-    const ps = await getProjects()
-    const folders = [root(), ...ps.map((p) => p.id)]
-    const all = (await Promise.all(folders.map(inFolder))).flat()
-    return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return (await getNotionSnapshot()).thoughts
 }
 async function putThought(t: Thought) {
     const { id, rawText, ...meta } = t
@@ -422,13 +439,13 @@ export async function verifyNotionConnection() {
 
 /** One reconciliation snapshot per pass avoids blind create retries and N-squared reads. */
 export async function createNotionSyncAdapter(snapshot?: {
+    root?: string
     projects: Project[]
     thoughts: Thought[]
 }): Promise<NonNullable<SyncAdapters['notion']>> {
-    const destinationRoot = root()
-    const [projects, thoughts] = snapshot
-        ? [snapshot.projects, snapshot.thoughts]
-        : await Promise.all([getProjects(), getThoughts()])
+    const loaded = snapshot ?? await getNotionSnapshot()
+    const destinationRoot = loaded.root ?? root()
+    const { projects, thoughts } = loaded
     return {
         root: destinationRoot,
         project: async (local: LocalProject, remoteId?: string) => {
