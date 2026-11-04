@@ -122,6 +122,10 @@ try:
     capture("04-restored-after-relaunch")
     tap("Открыть мысль:", contains=True)
     find("Исходный текст")
+    find("На телефоне")
+    find("Поделиться мыслью")
+    tap("Скопировать текст")
+    find("Текст скопирован")
     capture("05-note-editor")
     tap("Закрыть")
 
@@ -154,6 +158,11 @@ try:
     find('Тестовая мысль.', contains=True)
 
     tap("AI")
+    try:
+        find("Ждут AI", timeout=5)
+    except AssertionError:
+        # After voice review, the first tap can dismiss the Android keyboard.
+        tap("AI")
     find("Ждут AI")
     check_bottom_navigation()
     capture("06-ai-queue")

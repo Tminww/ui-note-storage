@@ -18,7 +18,9 @@ permissions:
 
 jobs:
     build-apk:
-        if: github.event_name != 'workflow_dispatch' || inputs.apk_run_id == ''
+        if: >-
+            (github.event_name != 'workflow_dispatch' || inputs.apk_run_id == '') &&
+            (github.event_name != 'release' || !contains(github.event.release.assets.*.name, 'app-release.apk'))
         runs-on: ubuntu-latest
         timeout-minutes: 70
         env:
@@ -94,7 +96,10 @@ jobs:
 
     android-smoke:
         needs: build-apk
-        if: ${{ !cancelled() && (needs.build-apk.result == 'success' || needs.build-apk.result == 'skipped') }}
+        if: >-
+            !cancelled() &&
+            (needs.build-apk.result == 'success' ||
+            (github.event_name == 'workflow_dispatch' && inputs.apk_run_id != '' && needs.build-apk.result == 'skipped'))
         runs-on: ubuntu-latest
         timeout-minutes: 25
         steps:

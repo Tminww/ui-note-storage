@@ -3,7 +3,7 @@
     "name": "Thoughts",
     "slug": "thoughts-ai-inbox",
     "scheme": "thoughts",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#F6F7FB",
@@ -13,7 +13,7 @@
     "android": {
       "package": "dev.thoughts.miniapp",
       "edgeToEdgeEnabled": true,
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "monochromeImage": "./assets/monochrome-icon.png",
