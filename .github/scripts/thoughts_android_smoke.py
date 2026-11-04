@@ -125,7 +125,8 @@ try:
     find("На телефоне")
     find("Поделиться мыслью")
     capture("05-note-editor")
-    tap("Закрыть")
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    find("Новая мысль")
 
     tap('Начать диктовку')
     find('Идёт запись')
