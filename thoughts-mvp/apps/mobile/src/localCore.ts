@@ -1,4 +1,5 @@
 import type { Project, Thought } from './api'
+import { allTypes, namedSuggestion, normalizedName, type ClassificationProposal, type ThoughtType } from './taxonomy.ts'
 
 export type Preferences = {
     theme: 'light' | 'dark' | 'system'
@@ -36,7 +37,7 @@ export type AIHistoryEntry = {
     generatorModel?: string | null
     decisionModel?: string | null
     inputText: string
-    result?: Partial<Pick<Thought, 'title' | 'summary' | 'category' | 'projectId' | 'confidence' | 'tags'>>
+    result?: Partial<Pick<Thought, 'title' | 'summary' | 'category' | 'projectId' | 'confidence' | 'tags' | 'classificationProposal'>>
     error?: string
     applied?: boolean
     usage?: AIUsage
@@ -48,6 +49,7 @@ export type LocalState = {
     draft: string
     preferences: Preferences
     aiHistory: AIHistoryEntry[]
+    customCategories: ThoughtType[]
 }
 export type DocumentStorage = {
     load: () => Promise<string | null>
@@ -89,6 +91,7 @@ const initial = (): LocalState => ({
     projects: [],
     thoughts: [],
     aiHistory: [],
+    customCategories: [],
     draft: '',
     preferences: {
         theme: 'system',
@@ -124,7 +127,11 @@ export function createLocalRepository(
                     'Не удалось прочитать локальную базу. Данные сохранены, база не перезаписана.'
                 )
             }
-            state = { ...saved, aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
+            state = { ...saved, customCategories: Array.isArray(saved.customCategories) ? saved.customCategories : [], aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
+            for (const thought of state.thoughts) {
+                const type = thought.categoryDefinition
+                if (type?.id.startsWith('custom:') && !state.customCategories.some((c) => c.id === type.id)) state.customCategories.push(type)
+            }
         }
     }
     const initialize = () => (initialized ??= read())
@@ -289,6 +296,10 @@ export function createLocalRepository(
                 const changedText = body.rawText !== undefined && body.rawText !== t.rawText
                 for (const key of ['title', 'rawText', 'summary', 'category', 'status'] as const)
                     if (body[key] !== undefined) Object.assign(t, { [key]: body[key] })
+                if (body.category !== undefined) {
+                    t.categoryLocked = true
+                    t.categoryDefinition = allTypes(s.customCategories).find((c) => c.id === body.category)
+                }
                 if ('projectId' in body) {
                     if (
                         body.projectId &&
@@ -299,11 +310,13 @@ export function createLocalRepository(
                     t.projectLocked = Boolean(body.projectId)
                 }
                 if (changedText) {
+                    t.classificationProposal = null
                     t.aiPending = true
                     t.status = 'pending'
                     t.attempts = 0
                     t.retryAt = 0
                 } else if (body.status === 'ready') {
+                    t.classificationProposal = null
                     t.aiPending = false
                     t.errorMessage = null
                     t.attempts = 0
@@ -312,6 +325,51 @@ export function createLocalRepository(
                 touch(t)
                 return t
             }),
+        confirmClassification: (noteId: string, revision: number, proposal: ClassificationProposal) =>
+            mutate((s) => {
+                const t = findNote(s, noteId)
+                if (t.revision !== revision || !t.classificationProposal)
+                    throw new Error('Мысль изменилась. Открой актуальное предложение ещё раз.')
+                const pending = t.classificationProposal
+                if (pending.project && !t.projectLocked) {
+                    const candidate = namedSuggestion(proposal.project)
+                    if (!candidate) throw new Error('Укажи название проекта')
+                    let project = s.projects.find((p) => !p.deleted && normalizedName(p.name) === normalizedName(candidate.name))
+                    if (!project) {
+                        project = { ...candidate, id: id(), color: '#5B4FE0', createdAt: stamp(), updatedAt: stamp(), revision: 1, deleted: false, notion: {} }
+                        s.projects.push(project)
+                    }
+                    t.projectId = project.id
+                    t.projectLocked = true
+                }
+                if (pending.category && !t.categoryLocked) {
+                    const candidate = namedSuggestion(proposal.category)
+                    if (!candidate) throw new Error('Укажи название типа')
+                    let category = allTypes(s.customCategories).find((c) => normalizedName(c.name) === normalizedName(candidate.name))
+                    if (!category) {
+                        category = { ...candidate, id: `custom:${id()}` }
+                        s.customCategories.push(category)
+                    }
+                    t.category = category.id
+                    t.categoryDefinition = category
+                    t.categoryLocked = true
+                }
+                t.classificationProposal = null
+                t.status = t.projectId && !(pending.unresolved?.category && !pending.category) ? 'ready' : 'needs_review'
+                t.aiPending = false
+                t.errorMessage = null
+                t.attempts = t.retryAt = 0
+                touch(t)
+                return t
+            }),
+        dismissClassification: (noteId: string, revision: number) => mutate((s) => {
+            const t = findNote(s, noteId)
+            if (t.revision !== revision) throw new Error('Мысль изменилась. Открой её ещё раз.')
+            t.classificationProposal = null
+            t.aiPending = false
+            t.status = 'needs_review'
+            touch(t)
+        }),
         deleteThought: (noteId: string) =>
             mutate((s) => {
                 const t = findNote(s, noteId)
@@ -326,6 +384,7 @@ export function createLocalRepository(
                 t.attempts = 0
                 t.retryAt = 0
                 t.errorMessage = null
+                t.classificationProposal = null
                 t.status = 'pending'
                 touch(t)
                 return t
@@ -373,6 +432,8 @@ export function createLocalRepository(
                         })
                 }
                 for (const remote of thoughts) {
+                    const type = remote.categoryDefinition
+                    if (type?.id.startsWith('custom:') && !s.customCategories.some((c) => c.id === type.id)) s.customCategories.push(type)
                     const existing = s.thoughts.find(
                         (t) =>
                             t.id === (remote.localId || remote.id) ||
@@ -467,7 +528,8 @@ export function createLocalRepository(
                                     error: result.errorMessage ? historyError(result.errorMessage) : undefined,
                                     applied: !t.deleted && t.revision === captured.revision,
                                     result: { title: result.title, summary: result.summary, category: result.category,
-                                        projectId: result.projectId, confidence: result.confidence, tags: result.tags }
+                                        projectId: result.projectId, confidence: result.confidence, tags: result.tags,
+                                        classificationProposal: result.classificationProposal }
                                 })
                                 if (t.deleted || t.revision !== captured.revision) return
                                 for (const key of [
@@ -481,17 +543,19 @@ export function createLocalRepository(
                                     'decisionModel',
                                     'status'
                                 ] as const) {
-                                    if (result[key] !== undefined)
+                                    if (result[key] !== undefined && !(key === 'category' && t.categoryLocked))
                                         Object.assign(t, { [key]: result[key] })
                                 }
+                                t.classificationProposal = result.classificationProposal ?? null
+                                t.categoryDefinition = allTypes(s.customCategories).find((c) => c.id === t.category)
                                 if (!t.projectLocked && result.projectId !== undefined)
                                     t.projectId = s.projects.some(
                                         (p) => !p.deleted && p.id === result.projectId
                                     )
                                         ? result.projectId
                                         : null
-                                t.aiPending =
-                                    Boolean(result.errorMessage) || result.status === 'pending'
+                                t.aiPending = !t.classificationProposal &&
+                                    (Boolean(result.errorMessage) || result.status === 'pending')
                                 t.attempts = t.aiPending ? t.attempts + 1 : 0
                                 t.retryAt = t.aiPending
                                     ? now() + Math.min(300000, 2000 * 2 ** t.attempts)

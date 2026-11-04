@@ -62,7 +62,8 @@ export function syncLocalData() {
                         thought.rawText,
                         projects,
                         thought.projectLocked ? thought.projectId : null,
-                        settings
+                        settings,
+                        { categories: localRepository.snapshot().customCategories, lockedCategory: thought.categoryLocked ? thought.category : null }
                     )
                 return request<EnrichmentResult>('/enrich', {
                     method: 'POST',
@@ -70,6 +71,8 @@ export function syncLocalData() {
                         rawText: thought.rawText,
                         projectId: thought.projectLocked ? thought.projectId : null,
                         projects,
+                        categories: localRepository.snapshot().customCategories,
+                        lockedCategory: thought.categoryLocked ? thought.category : null,
                         settings
                     })
                 })

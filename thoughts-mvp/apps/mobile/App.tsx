@@ -32,15 +32,10 @@ import { useVoiceInput } from './src/useVoiceInput'
 import { useAutomaticUpdates } from './src/useAutomaticUpdates'
 import type { LocalThought } from './src/localCore'
 import { registerBackgroundSync } from './src/backgroundSync'
+import { allTypes } from './src/taxonomy'
+import { syncLocalData } from './src/localService'
 
 type Page = 'thoughts' | 'projects' | 'ai' | 'settings'
-const categories = {
-    idea: 'Идея',
-    task: 'Задача',
-    bug: 'Ошибка',
-    research: 'Исследование',
-    note: 'Заметка'
-}
 const clock = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 export default function App() {
@@ -74,7 +69,10 @@ function ThoughtsApp() {
     const [undoId, setUndoId] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [projectEditor, setProjectEditor] = useState<Partial<Project> | null>(null)
-    const [editing, setEditing] = useState<Thought | null>(null)
+    const [editing, setEditing] = useState<LocalThought | null>(null)
+    const savedEditing = state.thoughts.find((t) => t.id === editing?.id)
+    const hasUnsavedEdits = Boolean(editing && savedEditing && (['title', 'rawText', 'summary', 'projectId', 'category'] as const).some((key) => editing[key] !== savedEditing[key]))
+    const categories: Record<string, string> = Object.fromEntries(allTypes(state.customCategories).map((c) => [c.id, c.name]))
     const [historyId, setHistoryId] = useState<string | null>(null)
     const [historyLimit, setHistoryLimit] = useState(20)
     const historyEntry = state.aiHistory.find((h) => h.id === historyId)
@@ -233,7 +231,7 @@ function ThoughtsApp() {
                             ? sync.online
                                 ? 'Ждёт обработки AI'
                                 : 'AI обработает после подключения'
-                            : 'Нужно проверить классификацию'}
+                            : t.classificationProposal ? 'DeepSeek предложил новый проект или тип · проверь' : 'Нужно проверить классификацию'}
                     </Text>
                 ) : null}
             </Pressable>
@@ -750,6 +748,7 @@ function ThoughtsApp() {
                         <Text selectable>{historyEntry.result.title}</Text>
                         <Text selectable>{historyEntry.result.summary}</Text>
                         <Text className="text-sm text-muted-foreground">{historyEntry.result.category ? categories[historyEntry.result.category] : ''} · {projectName(historyEntry.result.projectId || null)}</Text>
+                        {historyEntry.result.classificationProposal ? <Info>Предложение, возвращённое ИИ: {[historyEntry.result.classificationProposal.project?.name, historyEntry.result.classificationProposal.category?.name].filter(Boolean).join(' · ')}. {historyEntry.result.classificationProposal.reason}</Info> : null}
                         {historyEntry.applied === false ? <Info warning>Ответ сохранён в истории, но не применён: мысль была изменена или удалена во время обработки.</Info> : null}
                     </> : null}
                     {historyEntry.error ? <Info warning>{historyEntry.error}</Info> : null}
@@ -851,6 +850,33 @@ function ThoughtsApp() {
                 ) : null}
             </Sheet>
             <Sheet visible={editing !== null} title="Мысль" onClose={() => setEditing(null)}>
+                {editing?.classificationProposal ? (
+                    <Box className="gap-4 rounded-3xl border border-primary bg-secondary p-4">
+                        <Text className="text-base font-semibold">Предложение DeepSeek</Text>
+                        {error ? <Info warning>{error}</Info> : null}
+                        {hasUnsavedEdits ? <Info warning>Сначала сохрани изменения мысли. После изменения текста или классификации прежнее предложение отменяется.</Info> : null}
+                        <Text className="text-sm">Jev не определил проект или тип уверенно. Ничего не создаётся без твоего подтверждения.</Text>
+                        <Text className="text-sm text-muted-foreground">{editing.classificationProposal.reason}</Text>
+                        {(['project', 'category'] as const).map((key) => {
+                            const item = editing.classificationProposal?.[key]
+                            return item ? <Box key={key} className="gap-2">
+                                <Field label={key === 'project' ? 'Предложен новый проект' : 'Предложен новый тип'} value={item.name} maxLength={80} onChangeText={(name) => setEditing({ ...editing, classificationProposal: { ...editing.classificationProposal!, [key]: { ...item, name } } })} />
+                                <Field label="Описание" value={item.description} maxLength={400} onChangeText={(description) => setEditing({ ...editing, classificationProposal: { ...editing.classificationProposal!, [key]: { ...item, description } } })} />
+                            </Box> : null
+                        })}
+                        <Action disabled={busy || hasUnsavedEdits} onPress={() => void run(async () => {
+                            await localRepository.confirmClassification(editing.id, editing.revision, editing.classificationProposal!)
+                            void syncLocalData()
+                            setEditing(null)
+                            setNotice('Предложение подтверждено и сохранено на телефоне')
+                        })}>Подтвердить создание и применить</Action>
+                        <Action secondary disabled={busy} onPress={() => void run(async () => {
+                            await localRepository.dismissClassification(editing.id, editing.revision)
+                            setEditing(null)
+                            setNotice('Предложение отклонено. Можно выбрать проект и тип вручную.')
+                        })}>Отклонить предложение</Action>
+                    </Box>
+                ) : null}
                 <Field
                     label="Название"
                     value={editing?.title || ''}

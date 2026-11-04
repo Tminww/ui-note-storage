@@ -124,6 +124,16 @@ export function createApp({ repository, ai, env = process.env } = {}) {
                 const projectId = data.projectId || null
                 if (projectId && !projects.some((p) => p.id === projectId))
                     throw new HttpError(400, 'Проект не найден')
+                if (data.categories !== undefined && (!Array.isArray(data.categories) || data.categories.length > 80))
+                    throw new HttpError(400, 'Некорректный список типов')
+                const categories = (data.categories || []).map((c) => {
+                    const id = requiredString(c.id, 100, 'ID типа')
+                    if (!/^custom:[\w-]+$/.test(id)) throw new HttpError(400, 'Некорректный ID типа')
+                    return { id, name: requiredString(c.name, 80, 'Название типа'), description: optionalString(c.description, 400, 'Описание типа') || '' }
+                })
+                const lockedCategory = data.lockedCategory || null
+                if (lockedCategory && !['idea', 'task', 'bug', 'research', 'note', ...categories.map((c) => c.id)].includes(lockedCategory))
+                    throw new HttpError(400, 'Тип не найден')
                 let thought = {
                     id: 'local-enrichment',
                     rawText,
@@ -132,7 +142,8 @@ export function createApp({ repository, ai, env = process.env } = {}) {
                     tags: [],
                     projectId,
                     projectLocked: Boolean(projectId),
-                    category: 'note',
+                    category: lockedCategory || 'note',
+                    categoryLocked: Boolean(lockedCategory),
                     status: 'pending'
                 }
                 const settings = { ...repo.getSettings(), ...validateSettings(data.settings || {}) }
@@ -141,6 +152,7 @@ export function createApp({ repository, ai, env = process.env } = {}) {
                     getThought: () => thought,
                     getSettings: () => settings,
                     listProjects: () => projects,
+                    getCategories: () => categories,
                     updateThought: (_id, patch) => (thought = { ...thought, ...patch })
                 }
                 return send(

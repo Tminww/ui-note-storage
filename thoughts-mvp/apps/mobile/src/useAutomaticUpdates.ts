@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, Platform } from 'react-native'
 import * as Updates from 'expo-updates'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 
 // A release build downloads compatible EAS updates quietly. Never interrupt an
 // unsaved thought by automatically reloading JavaScript while the app is open.
@@ -8,11 +9,29 @@ const MINIMUM_CHECK_INTERVAL_MS = 5 * 60 * 1000
 
 export function useAutomaticUpdates() {
     const [status, setStatus] = useState('')
-    const [ready, setReady] = useState(false)
+    const [downloaded, setReady] = useState(false)
+    const { isUpdatePending } = Updates.useUpdates()
+    const ready = downloaded || isUpdatePending
+    const [firstLaunchedAt, setFirstLaunchedAt] = useState<string | null>(null)
     const [checking, setChecking] = useState(false)
     const inFlight = useRef(false)
     const lastCheckAt = useRef(0)
     const enabled = Platform.OS !== 'web' && !__DEV__ && Updates.isEnabled
+    useEffect(() => {
+        if (!enabled || !Updates.updateId) return
+        let mounted = true
+        void (async () => {
+            const key = 'thoughts:running-update'
+            const saved = await AsyncStorage.getItem(key)
+            let previous: { id?: string; firstLaunchedAt?: string } = {}
+            try { previous = JSON.parse(saved || '{}') } catch { /* replace invalid metadata only */ }
+            const firstLaunchedAt = previous.id === Updates.updateId && previous.firstLaunchedAt
+                ? previous.firstLaunchedAt : new Date().toISOString()
+            if (mounted) setFirstLaunchedAt(firstLaunchedAt)
+            await AsyncStorage.setItem(key, JSON.stringify({ id: Updates.updateId, firstLaunchedAt }))
+        })().catch(() => {})
+        return () => { mounted = false }
+    }, [enabled])
 
     const check = useCallback(
         async (manual = false) => {
@@ -52,7 +71,7 @@ export function useAutomaticUpdates() {
                 } else {
                     // Offline use remains fully functional. Allow retry on next foreground.
                     lastCheckAt.current = 0
-                    setStatus('')
+                    setStatus('Автообновление отложено: ' + (error instanceof Error ? error.message : String(error)))
                 }
             } finally {
                 inFlight.current = false
@@ -87,5 +106,7 @@ export function useAutomaticUpdates() {
         }
     }, [enabled, check])
 
-    return { enabled, status, ready, checking, check, apply }
+    return { enabled, status, ready, checking, check, apply, firstLaunchedAt,
+        publishedAt: Updates.createdAt?.toISOString() ?? null,
+        updateId: Updates.updateId, embedded: Updates.isEmbeddedLaunch }
 }

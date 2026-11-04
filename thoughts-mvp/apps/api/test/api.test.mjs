@@ -51,6 +51,44 @@ function createMockFetch() {
 }
 const settingsEnv = { OPENROUTER_API_KEY: 'mock-key', STORAGE_DRIVER: 'sqlite' }
 
+test('phone enrichment returns an unconfirmed suggestion and accepts confirmed custom types', async () => {
+    const calls = []
+    let confident = false
+    const ai = createAI({ env: settingsEnv, fetchFn: async (url, init) => {
+        const body = JSON.parse(init.body); calls.push(body)
+        if (url.includes('/decisions')) return new Response(JSON.stringify({ answers: {
+            category: { type: 'choice', choice: confident ? 'c0' : 'unclassified', confidence: 0.99 },
+            project: { type: 'choice', choice: 'inbox', confidence: 0.99 }
+        } }))
+        const proposing = body.messages[0].content.includes('Jev could not')
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(proposing
+            ? { project: { name: 'Сад', description: 'Растения' }, category: { name: 'Покупка', description: 'Что купить' }, reason: 'Новый контекст' }
+            : { title: 'Купить семена', summary: 'Купить семена для сада', tags: [] }) } }] }))
+    } })
+    const app = createApp({ repository: createSQLiteRepository(':memory:'), ai, env: settingsEnv })
+    await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve))
+    const enrich = async (body) => {
+        const response = await fetch(`http://127.0.0.1:${app.server.address().port}/api/enrich`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        })
+        return { code: response.status, body: await response.json() }
+    }
+    try {
+        const result = await enrich({ rawText: 'Купить семена', projects: [] })
+        assert.equal(result.code, 200); assert.equal(result.body.status, 'needs_review')
+        assert.equal(result.body.classificationProposal.project.name, 'Сад')
+        assert.equal(result.body.classificationProposal.category.name, 'Покупка')
+        assert.equal(app.repository.listProjects().length, 0)
+        assert.equal(app.repository.listThoughts().length, 0)
+        confident = true
+        const categories = [{ id: 'custom:buy', name: 'Покупка', description: 'Что купить' }]
+        const next = await enrich({ rawText: 'Купить семена', projects: [{ id: 'garden', name: 'Сад' }], projectId: 'garden', categories })
+        assert.equal(next.body.category, 'custom:buy'); assert.equal(next.body.status, 'ready')
+        assert.equal(next.body.classificationProposal, null)
+        assert.equal((await enrich({ rawText: 'Текст', projects: [], categories, lockedCategory: 'custom:missing' })).code, 400)
+    } finally { await app.close() }
+})
+
 test('stateless enrichment classifies local project IDs without creating server notes', async () => {
     const { mock } = createMockFetch()
     const app = createApp({

@@ -426,9 +426,12 @@ export function SettingsScreen({
                         ? 'Совместимые обновления интерфейса скачиваются при запуске и возвращении в приложение. Применяй их, когда закончишь писать.'
                         : 'Этот APK не поддерживает обновления. Один раз установи новую сборку Thoughts с подключённым Expo.'}
                 </Info>
-                <Text className="text-sm text-muted-foreground">
-                    Thoughts 0.3 · Локальное хранилище и очередь
-                </Text>
+                <Box className="gap-2 rounded-3xl border border-border bg-card p-4">
+                    <Text className="text-base font-semibold">Thoughts · интерфейс 0.3.3</Text>
+                    <Text className="text-sm">Дата выпуска установленного обновления: {updates.publishedAt ? new Date(updates.publishedAt).toLocaleString('ru-RU') : 'недоступна в режиме разработки'}</Text>
+                    {updates.firstLaunchedAt ? <Text className="text-sm text-muted-foreground">Впервые запущено на этом устройстве: {new Date(updates.firstLaunchedAt).toLocaleString('ru-RU')}</Text> : null}
+                    <Text className="text-sm text-muted-foreground">{updates.embedded ? 'Версия из APK' : 'Обновление Expo'}{updates.updateId ? ` · ${updates.updateId.slice(0, 8)}` : ''}</Text>
+                </Box>
                 <Action
                     secondary
                     disabled={updates.checking}

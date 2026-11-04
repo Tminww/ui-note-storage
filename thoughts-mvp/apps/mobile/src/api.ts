@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { localApi } from './localService'
-export type Category = 'idea' | 'task' | 'bug' | 'research' | 'note'
+import type { Category, ClassificationProposal, ThoughtType } from './taxonomy'
+export type { Category } from './taxonomy'
 export type ThoughtStatus = 'pending' | 'processing' | 'ready' | 'needs_review'
 export type Project = {
     localId?: string
@@ -24,6 +25,9 @@ export type Thought = {
     projectId: string | null
     projectLocked: boolean
     category: Category
+    categoryLocked?: boolean
+    categoryDefinition?: ThoughtType
+    classificationProposal?: ClassificationProposal | null
     status: ThoughtStatus
     confidence: number | null
     errorMessage: string | null
