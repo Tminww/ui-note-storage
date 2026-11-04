@@ -2,9 +2,11 @@ name: Publish Thoughts EAS Update
 
 on:
     push:
-        branches: [thoughts-ai-inbox-mvp]
+        branches: [main]
         paths:
             - 'thoughts-mvp/apps/mobile/**'
+            - 'thoughts-mvp/package.json'
+            - 'thoughts-mvp/package-lock.json'
             - '.github/workflows/publish-thoughts-eas-update.yml'
     workflow_dispatch:
 
