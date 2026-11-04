@@ -100,7 +100,10 @@ async function fixture() {
                 if (body.properties) p.name = body.properties.title.title[0].text.content
                 if (body.archived) p.archived = true
             }
-            result = { id: p.id, parent: { page_id: p.parent }, archived: p.archived || false }
+            result = {
+                id: p.id, parent: { page_id: p.parent }, archived: p.archived || false,
+                properties: { Name: { type: 'title', title: [{ plain_text: p.name }] } }
+            }
         }
         return new Response(JSON.stringify(result), { status: 200 })
     }
@@ -212,10 +215,16 @@ test('a linked page recovers only app notes for its registered project', async (
     assert.throws(() => f.api.parseNotionProjectPage(`https://notion.so.example.org/${target}`), /Вставь ссылку/)
     f.pages.set(target, { id: target, name: 'Existing page', blocks: [paragraph('user', 'Keep me')] })
     f.pages.set('foreign', { id: 'foreign', parent: target, name: '💭 Manual', blocks: [] })
+    assert.equal(await f.api.verifyNotionProjectPage(target), 'Existing page')
     const adapter = await f.api.createNotionSyncAdapter()
     await adapter.project({ id: 'local-project', name: 'Музыка', revision: 1, notionPageId: target, notionPageRoot: 'root' }, 'p')
-    const note = { id: 'local-note', title: 'Ритм', rawText: 'Тренировка', revision: 1, notion: {} }
+    const note = {
+        id: 'local-note', title: 'Ритм', rawText: 'Тренировка', revision: 1, notion: {},
+        notionErrors: { root: { revision: 1, message: 'Local error detail' } }
+    }
     const noteId = await adapter.thought(note, 'p')
+    const toggle = f.pages.get(noteId).blocks.find((b) => b.type === 'toggle')
+    assert.doesNotMatch(f.nested.get(toggle.id)[0].paragraph.rich_text[0].text.content, /notionErrors|Local error detail/)
     assert.equal(await adapter.thought(note, target, noteId, 'p'), noteId)
     assert.equal(f.pages.get(noteId).parent, target)
     const snapshot = await f.api.getNotionSnapshot()

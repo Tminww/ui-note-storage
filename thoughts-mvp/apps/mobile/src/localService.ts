@@ -16,6 +16,7 @@ type SyncStatus = {
     lastSync: number | null
     aiConfigured: boolean
     notionConfigured: boolean
+    notionReadError: { root: string; message: string } | null
 }
 let status: SyncStatus = {
     online: true,
@@ -23,7 +24,8 @@ let status: SyncStatus = {
     error: '',
     lastSync: null,
     aiConfigured: false,
-    notionConfigured: false
+    notionConfigured: false,
+    notionReadError: null
 }
 const listeners = new Set<() => void>()
 const publish = (patch: Partial<SyncStatus>) => {
@@ -79,14 +81,17 @@ export function syncLocalData() {
             }
         }
         if (notionConfigured) {
+            const root = getNotionRoot()
             try {
                 const snapshot = await getNotionSnapshot()
                 await localRepository.importRemote(snapshot.projects, snapshot.thoughts, snapshot.root)
                 adapters.notion = await createNotionSyncAdapter(snapshot)
+                publish({ notionReadError: null })
                 const linkedError = snapshot.linkedErrors.values().next().value
                 if (linkedError) publish({ error: linkedError.message })
             } catch (error) {
-                publish({ error: error instanceof Error ? error.message : String(error) })
+                const message = error instanceof Error ? error.message : String(error)
+                publish({ error: message, notionReadError: { root, message } })
             }
         }
         await localRepository.flush(adapters)
@@ -143,10 +148,12 @@ async function validateProjectPage(value: string | null | undefined, current?: s
     if (value === undefined) return {}
     const notionPageId = parseNotionProjectPage(value ?? '')
     const notionPageRoot = notionPageId ? getNotionRoot() : null
-    if (notionPageId && notionPageId !== current) await verifyNotionProjectPage(notionPageId)
+    const notionPageTitle = notionPageId
+        ? notionPageId !== current ? await verifyNotionProjectPage(notionPageId) : undefined
+        : null
     if (notionPageId && notionPageRoot !== getNotionRoot())
         throw new Error('Общее хранилище Notion изменилось. Повтори привязку страницы')
-    return { notionPageId, notionPageRoot }
+    return { notionPageId, notionPageRoot, notionPageTitle }
 }
 export const localApi = {
     projects: localRepository.projects,

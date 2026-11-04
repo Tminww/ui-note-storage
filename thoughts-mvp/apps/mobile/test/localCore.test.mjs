@@ -201,6 +201,31 @@ test('concurrent sync triggers share a single worker', async () => {
     await first
     assert.equal(calls, 1)
 })
+test('a Notion failure stays with the failed revision and clears after a retry', async () => {
+    const f = fixture()
+    const local = f.open()
+    const project = await local.createProject({ name: 'Проект', description: '', color: '#123456' })
+    const blocked = await local.createThought('Project note', project.id)
+    const inbox = await local.createThought('Inbox note', null)
+    const remote = notion()
+    await assert.rejects(local.flush({
+        notion: { ...remote.adapter, project: async () => { throw new Error('No project access') } }
+    }), /No project access/)
+    const reopened = f.open()
+    const [savedBlocked, savedInbox] = await reopened.thoughts()
+    assert.equal(savedBlocked.id, blocked.id)
+    assert.deepEqual(savedBlocked.notionErrors.root, {
+        revision: savedBlocked.revision, message: 'No project access'
+    })
+    assert.equal(savedInbox.id, inbox.id)
+    assert.equal(savedInbox.notionErrors, undefined)
+    assert.equal(savedInbox.notion.root.revision, savedInbox.revision)
+    await reopened.flush({ notion: remote.adapter })
+    const [synced] = await reopened.thoughts()
+    assert.equal(synced.notionErrors.root, undefined)
+    assert.equal(synced.notion.root.revision, synced.revision)
+})
+
 test('Notion outage does not prevent AI processing other thoughts', async () => {
     const a = fixture().open()
     const p = await a.createProject({ name: 'Work', description: '', color: '#123456' })

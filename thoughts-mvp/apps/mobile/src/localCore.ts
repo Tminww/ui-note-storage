@@ -22,6 +22,7 @@ export type LocalThought = Thought & {
     attempts: number
     retryAt: number
     notion: Record<string, RemoteLink>
+    notionErrors?: Record<string, { revision: number; message: string }>
 }
 export type AIUsage = { requests?: number; promptTokens?: number; completionTokens?: number; totalTokens?: number; costUsd?: number }
 export type EnrichmentResult = Partial<Thought> & { usage?: AIUsage }
@@ -221,7 +222,7 @@ export function createLocalRepository(
                 .filter((t) => !t.deleted)
                 .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         },
-        createProject: (body: Pick<Project, 'name' | 'description' | 'color' | 'notionPageId' | 'notionPageRoot'>) =>
+        createProject: (body: Pick<Project, 'name' | 'description' | 'color' | 'notionPageId' | 'notionPageRoot' | 'notionPageTitle'>) =>
             mutate((s) => {
                 if (!body.name.trim()) throw new Error('Укажи название проекта')
                 ensureUniquePage(s, body.notionPageId)
@@ -254,6 +255,7 @@ export function createLocalRepository(
                     for (const thought of s.thoughts)
                         if (!thought.deleted && thought.projectId === p.id) touch(thought)
                 }
+                if (body.notionPageTitle !== undefined) p.notionPageTitle = body.notionPageTitle
                 touch(p)
                 return p
             }),
@@ -489,6 +491,7 @@ export function createLocalRepository(
                 await initialize()
                 const destination = adapters.notion
                 const errors: unknown[] = []
+                const projectErrors = new Map<string, unknown>()
                 if (destination)
                     for (const captured of [...state.projects]) {
                         if (
@@ -509,6 +512,7 @@ export function createLocalRepository(
                                 }
                             })
                         } catch (error) {
+                            projectErrors.set(captured.id, error)
                             errors.push(error)
                         }
                     }
@@ -600,6 +604,7 @@ export function createLocalRepository(
                     current = state.thoughts.find((t) => t.id === entry.id)!
                     if (!destination) continue
                     const link = current.notion[destination.root]
+                    const revision = current.revision
                     try {
                         if (current.deleted) {
                             if (link && link.revision !== current.revision) {
@@ -619,8 +624,10 @@ export function createLocalRepository(
                             ? state.projects.find((p) => p.id === current.projectId && !p.deleted)
                             : undefined
                         const projectLink = project?.notion[destination.root]
-                        if (current.projectId && (!projectLink || projectLink.revision !== project?.revision))
+                        if (current.projectId && (!projectLink || projectLink.revision !== project?.revision)) {
+                            if (projectErrors.has(current.projectId)) throw projectErrors.get(current.projectId)
                             continue
+                        }
                         // The managed page remains the logical project ID even when notes live elsewhere.
                         const linkedPage = project?.notionPageRoot === destination.root
                             ? project.notionPageId : null
@@ -637,8 +644,20 @@ export function createLocalRepository(
                                 id: remoteId,
                                 revision: captured.revision
                             }
+                            if (t.notionErrors) delete t.notionErrors[destination.root]
                         })
                     } catch (error) {
+                        if (!current.deleted) {
+                            const message = historyError(error instanceof Error ? error.message : String(error))
+                            const previous = current.notionErrors?.[destination.root]
+                            if (previous?.revision !== revision || previous.message !== message)
+                                await mutate((s) => {
+                                    const t = s.thoughts.find((row) => row.id === current.id)
+                                    if (!t || t.deleted || t.revision !== revision) return
+                                    t.notionErrors ??= {}
+                                    t.notionErrors[destination.root] = { revision, message }
+                                })
+                        }
                         errors.push(error)
                     }
                 }

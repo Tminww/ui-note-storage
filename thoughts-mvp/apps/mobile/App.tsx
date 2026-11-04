@@ -96,10 +96,30 @@ function ThoughtsApp() {
     const inboxCount = thoughts.filter((t) => !t.projectId).length
     const pending = thoughts.filter((t) => t.aiPending)
     const review = thoughts.filter((t) => t.status === 'needs_review')
-    const notionPending = thoughts.filter(
-        (t) => t.notion[getNotionRoot()]?.revision !== t.revision
-    ).length
+    const notionRoot = getNotionRoot()
+    const notionPending = thoughts.filter((t) => t.notion[notionRoot]?.revision !== t.revision).length
     const projectName = (id: string | null) => projects.find((p) => p.id === id)?.name || 'Входящие'
+    const notionStatus = (note: LocalThought) => {
+        const link = note.notion[notionRoot]
+        if (!sync.notionConfigured) return { label: 'На телефоне' }
+        if (link?.revision === note.revision) return { label: 'Сохранено в Notion', link }
+        const failure = note.notionErrors?.[notionRoot]
+        const error = (failure?.revision === note.revision ? failure.message : undefined) ??
+            (sync.notionReadError?.root === notionRoot ? sync.notionReadError.message : undefined)
+        return { label: error ? 'Ошибка Notion' : 'В очереди Notion', error, link }
+    }
+    const editingNotion = savedEditing ? notionStatus(savedEditing) : null
+    const draftDestination = (projectId: string | null) => {
+        if (!sync.notionConfigured) return 'Место сохранения: на телефоне'
+        const project = projects.find((p) => p.id === projectId)
+        if (!project) return 'Notion → проект выберет AI или мысль останется во входящих'
+        if (project.notionPageId && project.notionPageRoot === notionRoot) {
+            return project.notionPageTitle
+                ? `Notion → ${project.notionPageTitle}`
+                : `Notion → привязанная страница проекта «${project.name}»`
+        }
+        return `Notion → общее хранилище → ${project.name}`
+    }
     const openSettings = (next: Section) => {
         setPage('settings')
         setSection(next)
@@ -193,6 +213,7 @@ function ThoughtsApp() {
         else input.current?.focus()
     }
     const noteCard = (t: LocalThought) => {
+        const status = notionStatus(t)
         const color = state.preferences.projectColors
             ? projects.find((p) => p.id === t.projectId)?.color
             : undefined
@@ -229,6 +250,9 @@ function ThoughtsApp() {
                         })}
                     </Text>
                 </Box>
+                <Text className={`text-xs ${status.error ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    {status.label}
+                </Text>
                 {t.aiPending || t.status === 'needs_review' ? (
                     <Text className="text-xs text-muted-foreground">
                         {t.aiPending
@@ -389,6 +413,7 @@ function ThoughtsApp() {
                         editable={!busy}
                         className="max-h-36 min-h-12 text-base text-foreground placeholder:text-muted-foreground"
                     />
+                    <Text className="text-xs text-muted-foreground">{draftDestination(draftProject)}</Text>
                     <Box className="flex-row items-center gap-3">
                         <Pressable
                             onPress={() => setPicker(true)}
@@ -782,7 +807,10 @@ function ThoughtsApp() {
                             name={draftProject === p.id ? 'radio-button-on' : 'radio-button-off'}
                             tone="text-primary"
                         />
-                        <Text>{p.name}</Text>
+                        <Box className="flex-1 py-2">
+                            <Text>{p.name}</Text>
+                            <Text className="text-xs text-muted-foreground">{draftDestination(p.id)}</Text>
+                        </Box>
                     </Pressable>
                 ))}
             </Sheet>
@@ -881,6 +909,27 @@ function ThoughtsApp() {
                 ) : null}
             </Sheet>
             <Sheet visible={editing !== null} title="Мысль" onClose={() => setEditing(null)}>
+                {editingNotion ? (
+                    <Box className="gap-2">
+                        <Text className="text-sm font-semibold">{editingNotion.label}</Text>
+                        {editingNotion.error ? (
+                            <>
+                                <Info warning>{editingNotion.error}</Info>
+                                <Action secondary disabled={busy || !sync.online || sync.syncing}
+                                    onPress={() => void run(syncLocalData)}>
+                                    Повторить синхронизацию
+                                </Action>
+                            </>
+                        ) : null}
+                        {editingNotion.link ? (
+                            <Action secondary onPress={() => void run(() =>
+                                Linking.openURL(`https://www.notion.so/${editingNotion.link!.id}`)
+                            )}>
+                                Открыть заметку в Notion
+                            </Action>
+                        ) : null}
+                    </Box>
+                ) : null}
                 {editing?.classificationProposal ? (
                     <Box className="gap-4 rounded-3xl border border-primary bg-secondary p-4">
                         <Text className="text-base font-semibold">Предложение DeepSeek</Text>

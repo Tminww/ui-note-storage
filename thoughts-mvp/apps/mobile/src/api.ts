@@ -15,6 +15,7 @@ export type Project = {
     thoughtCount?: number
     notionPageId?: string | null
     notionPageRoot?: string | null
+    notionPageTitle?: string | null
 }
 export type Thought = {
     localId?: string

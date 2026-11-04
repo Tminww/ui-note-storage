@@ -239,7 +239,8 @@ export async function getProjects(
                 updatedAt: b.last_edited_time || now(),
                 thoughtCount: 0,
                 notionPageId: meta?.notionPageId ?? null,
-                notionPageRoot: meta?.notionPageId ? destinationRoot : null
+                notionPageRoot: meta?.notionPageId ? destinationRoot : null,
+                notionPageTitle: meta?.notionPageTitle ?? null
             }
         })
     )
@@ -483,6 +484,10 @@ export async function verifyNotionProjectPage(pageId: string) {
     const meta = await parseMeta<{ kind?: string }>(await getPageBlocks(pageId))
     if (meta?.kind === 'thought' || meta?.kind === 'project')
         throw new Error('Выбери существующую страницу вне служебных страниц Thoughts')
+    const titleProperty = Object.values(page.properties ?? {}).find(
+        (property: any) => property.type === 'title'
+    ) as { title: { plain_text?: string; text?: { content: string } }[] } | undefined
+    return titleProperty?.title.map((part) => part.plain_text ?? part.text?.content ?? '').join('').trim() || null
 }
 
 /** One reconciliation snapshot per pass avoids blind create retries and N-squared reads. */
@@ -506,7 +511,8 @@ export async function createNotionSyncAdapter(snapshot?: {
                 description: local.description,
                 color: local.color,
                 localRevision: local.revision,
-                notionPageId: local.notionPageRoot === destinationRoot ? local.notionPageId ?? null : null
+                notionPageId: local.notionPageRoot === destinationRoot ? local.notionPageId ?? null : null,
+                notionPageTitle: local.notionPageRoot === destinationRoot ? local.notionPageTitle ?? null : null
             }
             if (!remote) {
                 const page = await createChild(destinationRoot, PREFIX_PROJECT + local.name, meta)
@@ -524,6 +530,7 @@ export async function createNotionSyncAdapter(snapshot?: {
             let remote = remoteId || thoughts.find((t) => t.localId === local.id)?.id
             const {
                 notion: _links,
+                notionErrors: _notionErrors,
                 revision,
                 deleted: _deleted,
                 aiPending: _pending,
