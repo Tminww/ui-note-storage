@@ -146,6 +146,14 @@ test('lost Notion create acknowledgement is reconciled by stable local ID', asyn
     assert.ok(id)
     assert.equal(f.calls.filter((c) => c.path === '/pages' && c.method === 'POST').length, 1)
 })
+test('one Notion snapshot lists root and project blocks only once', async () => {
+    const f = await fixture()
+    const snapshot = await f.api.getNotionSnapshot()
+    assert.equal(snapshot.root, 'root')
+    assert.equal(snapshot.projects[0].name, 'Работа')
+    assert.equal(f.calls.filter((call) => call.path === '/blocks/root/children').length, 1)
+    assert.equal(f.calls.filter((call) => call.path === '/blocks/p/children').length, 1)
+})
 test('updating thought text changes only recorded owned blocks', async () => {
     const f = await fixture()
     f.pages.set('n', {

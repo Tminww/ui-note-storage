@@ -4,7 +4,7 @@ import * as Crypto from 'expo-crypto'
 import { createLocalRepository, type SyncAdapters, type EnrichmentResult } from './localCore'
 import { localDocument } from './localDocument'
 import { enrichNote, localSettings, saveLocalSettings } from './onDeviceAI'
-import { createNotionSyncAdapter, getProjects, getThoughts } from './notionStorage'
+import { createNotionSyncAdapter, getNotionSnapshot } from './notionStorage'
 import { getNotionRoot, hasSecret } from './deviceConfig'
 import { getApiUrl, request, serverApi, type AIConfig } from './api'
 
@@ -80,10 +80,9 @@ export function syncLocalData() {
         }
         if (notionConfigured) {
             try {
-                const root = getNotionRoot()
-                const [projects, thoughts] = await Promise.all([getProjects(), getThoughts()])
-                await localRepository.importRemote(projects, thoughts, root)
-                adapters.notion = await createNotionSyncAdapter({ projects, thoughts })
+                const snapshot = await getNotionSnapshot()
+                await localRepository.importRemote(snapshot.projects, snapshot.thoughts, snapshot.root)
+                adapters.notion = await createNotionSyncAdapter(snapshot)
             } catch (error) {
                 publish({ error: error instanceof Error ? error.message : String(error) })
             }
