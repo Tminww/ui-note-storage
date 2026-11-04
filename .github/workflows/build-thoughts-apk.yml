@@ -2,21 +2,9 @@ name: Build Thoughts Android APK
 
 on:
     push:
-        branches: [thoughts-ai-inbox-mvp]
-        # JS-only changes are delivered by EAS Update; rebuild APK only for native/config changes.
-        paths:
-            - 'thoughts-mvp/apps/mobile/app.config.js'
-            - 'thoughts-mvp/apps/mobile/app.json'
-            - 'thoughts-mvp/apps/mobile/eas.json'
-            - 'thoughts-mvp/apps/mobile/package.json'
-            - 'thoughts-mvp/apps/mobile/metro.config.js'
-            - 'thoughts-mvp/apps/mobile/babel.config.js'
-            - 'thoughts-mvp/package.json'
-            - 'thoughts-mvp/package-lock.json'
-            - '.github/workflows/build-thoughts-apk.yml'
-            - '.github/scripts/thoughts_android_smoke.py'
-            - '.github/scripts/build-voice-fixture.sh'
-            - '.github/scripts/voice-fixture/**'
+        branches: [main]
+    release:
+        types: [published]
     workflow_dispatch:
         inputs:
             apk_run_id:
@@ -70,7 +58,7 @@ jobs:
               run: npm ci --no-audit --no-fund
             - name: Validate types
               run: npm run check:mobile
-            - name: Run API regression tests
+            - name: Run API and mobile regression tests
               run: npm test
             - name: Lint mobile app
               run: npm run lint
@@ -145,3 +133,20 @@ jobs:
                   path: android-smoke-results/
                   if-no-files-found: warn
                   retention-days: 14
+
+    attach-release-apk:
+        if: github.event_name == 'release'
+        needs: android-smoke
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  name: thoughts-android-apk-ota-enabled
+                  path: apk
+            - name: Attach tested APK to the GitHub release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_TAG: ${{ github.event.release.tag_name }}
+              run: gh release upload --repo "$GITHUB_REPOSITORY" -- "$RELEASE_TAG" apk/app-release.apk
