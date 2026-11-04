@@ -48,6 +48,7 @@ export type LocalState = {
     projects: LocalProject[]
     thoughts: LocalThought[]
     draft: string
+    lastProjectId: string | null
     preferences: Preferences
     aiHistory: AIHistoryEntry[]
     customCategories: ThoughtType[]
@@ -95,6 +96,7 @@ const initial = (): LocalState => ({
     aiHistory: [],
     customCategories: [],
     draft: '',
+    lastProjectId: null,
     preferences: {
         theme: 'system',
         accent: 'indigo',
@@ -135,7 +137,7 @@ export function createLocalRepository(
                     'Не удалось прочитать локальную базу. Данные сохранены, база не перезаписана.'
                 )
             }
-            state = { ...saved, customCategories: Array.isArray(saved.customCategories) ? saved.customCategories : [], aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
+            state = { ...saved, lastProjectId: saved.lastProjectId ?? null, customCategories: Array.isArray(saved.customCategories) ? saved.customCategories : [], aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
             for (const thought of state.thoughts) {
                 const type = thought.categoryDefinition
                 if (type?.id.startsWith('custom:') && !state.customCategories.some((c) => c.id === type.id)) state.customCategories.push(type)
@@ -264,6 +266,7 @@ export function createLocalRepository(
                 const p = s.projects.find((p) => p.id === projectId)
                 if (!p) throw new Error('Проект не найден')
                 p.deleted = true
+                if (s.lastProjectId === p.id) s.lastProjectId = null
                 touch(p)
                 s.thoughts
                     .filter((t) => t.projectId === projectId && !t.deleted)
@@ -307,6 +310,7 @@ export function createLocalRepository(
                     notion: {}
                 }
                 s.thoughts.push(t)
+                if (projectId) s.lastProjectId = projectId
                 s.draft = ''
                 return t
             }),

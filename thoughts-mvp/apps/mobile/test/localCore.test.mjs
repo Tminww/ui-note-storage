@@ -85,6 +85,18 @@ function notion() {
         }
     }
 }
+test('quick project remembers the last manual save across restart and clears on deletion', async () => {
+    const f = fixture()
+    const local = f.open()
+    const project = await local.createProject({ name: 'Музыка', description: '', color: '#123456' })
+    await local.createThought('Ритм', project.id)
+    await local.createThought('Автоматический выбор', null)
+    const restarted = f.open()
+    await restarted.initialize()
+    assert.equal(restarted.snapshot().lastProjectId, project.id)
+    await restarted.deleteProject(project.id)
+    assert.equal(restarted.snapshot().lastProjectId, null)
+})
 test('offline save, project, draft, preferences and queue survive restart', async () => {
     const f = fixture()
     const a = f.open()

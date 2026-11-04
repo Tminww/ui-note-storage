@@ -10,12 +10,14 @@ import {
     Platform,
     Pressable,
     ScrollView,
+    Share,
     StatusBar,
     TextInput
 } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { SafeAreaView } from './components/ui/safe-area'
 import * as Haptics from 'expo-haptics'
+import * as Clipboard from 'expo-clipboard'
 import { Box, Text, Heading } from './components/ui/surfaces'
 import { Action, Field, Icon, Info, Sheet, confirmDelete } from './components/ui/app-controls'
 import { api, loadApiUrl, type Thought, type Project } from './src/api'
@@ -74,6 +76,7 @@ function ThoughtsApp() {
     const linkedProjectPage = savedProject?.notionPageRoot === getNotionRoot()
         ? savedProject?.notionPageId : null
     const [editing, setEditing] = useState<LocalThought | null>(null)
+    const [copyNotice, setCopyNotice] = useState('')
     const savedEditing = state.thoughts.find((t) => t.id === editing?.id)
     const hasUnsavedEdits = Boolean(editing && savedEditing && (['title', 'rawText', 'summary', 'projectId', 'category'] as const).some((key) => editing[key] !== savedEditing[key]))
     const categories: Record<string, string> = Object.fromEntries(allTypes(state.customCategories).map((c) => [c.id, c.name]))
@@ -109,6 +112,11 @@ function ThoughtsApp() {
         return { label: error ? 'Ошибка Notion' : 'В очереди Notion', error, link }
     }
     const editingNotion = savedEditing ? notionStatus(savedEditing) : null
+    const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.id}` : null
+    const editingText = editing?.rawText.trim()
+        ? [editing.title.trim(), editing.rawText.trim()].filter(Boolean).join('\n\n') : ''
+    const notionErrorCount = thoughts.filter((note) => notionStatus(note).error).length
+    const lastProject = projects.find((project) => project.id === state.lastProjectId)
     const draftDestination = (projectId: string | null) => {
         if (!sync.notionConfigured) return 'Место сохранения: на телефоне'
         const project = projects.find((p) => p.id === projectId)
@@ -193,6 +201,25 @@ function ThoughtsApp() {
             haptic()
         })
     }
+    const copyThought = async (text: string, message: string) => {
+        setCopyNotice('')
+        if (!await Clipboard.setStringAsync(text)) throw new Error('Не удалось скопировать')
+        setCopyNotice(message)
+    }
+    const shareThought = async () => {
+        setCopyNotice('')
+        if (Platform.OS !== 'web') {
+            await Share.share({ message: editingText })
+            return
+        }
+        if (typeof navigator.share === 'function') {
+            await navigator.share({ text: editingText }).catch((error) => {
+                if (error?.name !== 'AbortError') throw error
+            })
+        } else {
+            await copyThought(editingText, 'Текст скопирован')
+        }
+    }
     const startVoice = () => {
         voiceAction.current++
         setVoiceScreen(true)
@@ -222,7 +249,11 @@ function ThoughtsApp() {
                 key={t.id}
                 accessibilityRole="button"
                 accessibilityLabel={`Открыть мысль: ${t.title}`}
-                onPress={() => setEditing({ ...t })}
+                onPress={() => {
+                    setError('')
+                    setCopyNotice('')
+                    setEditing({ ...t })
+                }}
                 className="gap-4 rounded-3xl border border-border bg-card p-4"
             >
                 <Text className="text-base leading-6">{t.rawText}</Text>
@@ -270,6 +301,7 @@ function ThoughtsApp() {
             (t) =>
                 (selected === 'all' ||
                     (selected === 'inbox' && !t.projectId) ||
+                    (selected === 'notion-errors' && Boolean(notionStatus(t).error)) ||
                     t.projectId === selected) &&
                 (!search ||
                     [t.rawText, t.title, t.summary, ...t.tags]
@@ -289,6 +321,9 @@ function ThoughtsApp() {
                         {[
                             { id: 'all', name: 'Все' },
                             { id: 'inbox', name: `Входящие · ${inboxCount}` },
+                            ...(notionErrorCount || selected === 'notion-errors'
+                                ? [{ id: 'notion-errors', name: `Ошибки Notion · ${notionErrorCount}` }]
+                                : []),
                             ...projects
                         ].map((p) => (
                             <Pressable
@@ -373,14 +408,18 @@ function ThoughtsApp() {
                         <Box className="items-center gap-4 py-12">
                             <Icon name="bulb-outline" size={40} tone="text-primary" />
                             <Heading>
-                                {thoughts.length ? 'Ничего не найдено' : 'Пока нет мыслей'}
+                                {selected === 'notion-errors' && !notionErrorCount
+                                    ? 'Ошибок Notion нет'
+                                    : thoughts.length ? 'Ничего не найдено' : 'Пока нет мыслей'}
                             </Heading>
                             <Text className="text-center text-sm leading-5 text-muted-foreground">
-                                {thoughts.length
+                                {selected === 'notion-errors' && !notionErrorCount
+                                    ? 'Здесь появятся мысли, которые не удалось синхронизировать.'
+                                    : thoughts.length
                                     ? 'Попробуй другой поиск или фильтр.'
                                     : 'Запиши или продиктуй первую мысль. Интернет для сохранения не нужен.'}
                             </Text>
-                            {!thoughts.length
+                            {!thoughts.length && selected !== 'notion-errors'
                                 ? ['Идея для проекта', 'Что сделать завтра', 'Итоги встречи'].map(
                                       (example) => (
                                           <Pressable
@@ -414,6 +453,13 @@ function ThoughtsApp() {
                         className="max-h-36 min-h-12 text-base text-foreground placeholder:text-muted-foreground"
                     />
                     <Text className="text-xs text-muted-foreground">{draftDestination(draftProject)}</Text>
+                    {lastProject && (!draftProject || draftProject === lastProject.id) ? (
+                        <Action secondary disabled={busy} onPress={() =>
+                            setDraftProject(draftProject ? null : lastProject.id)
+                        }>
+                            {draftProject ? 'Вернуться к «Авто»' : `В проект «${lastProject.name}»`}
+                        </Action>
+                    ) : null}
                     <Box className="flex-row items-center gap-3">
                         <Pressable
                             onPress={() => setPicker(true)}
@@ -909,6 +955,8 @@ function ThoughtsApp() {
                 ) : null}
             </Sheet>
             <Sheet visible={editing !== null} title="Мысль" onClose={() => setEditing(null)}>
+                {error ? <Info warning>{error}</Info> : null}
+                {copyNotice ? <Info>{copyNotice}</Info> : null}
                 {editingNotion ? (
                     <Box className="gap-2">
                         <Text className="text-sm font-semibold">{editingNotion.label}</Text>
@@ -921,19 +969,23 @@ function ThoughtsApp() {
                                 </Action>
                             </>
                         ) : null}
-                        {editingNotion.link ? (
-                            <Action secondary onPress={() => void run(() =>
-                                Linking.openURL(`https://www.notion.so/${editingNotion.link!.id}`)
-                            )}>
-                                Открыть заметку в Notion
-                            </Action>
+                        {editingNotionUrl ? (
+                            <>
+                                <Action secondary onPress={() => void run(() => Linking.openURL(editingNotionUrl))}>
+                                    Открыть заметку в Notion
+                                </Action>
+                                <Action secondary disabled={busy} onPress={() => void run(() =>
+                                    copyThought(editingNotionUrl, 'Ссылка Notion скопирована')
+                                )}>
+                                    Скопировать ссылку Notion
+                                </Action>
+                            </>
                         ) : null}
                     </Box>
                 ) : null}
                 {editing?.classificationProposal ? (
                     <Box className="gap-4 rounded-3xl border border-primary bg-secondary p-4">
                         <Text className="text-base font-semibold">Предложение DeepSeek</Text>
-                        {error ? <Info warning>{error}</Info> : null}
                         {hasUnsavedEdits ? <Info warning>Сначала сохрани изменения мысли. После изменения текста или классификации прежнее предложение отменяется.</Info> : null}
                         <Text className="text-sm">Jev не определил проект или тип уверенно. Ничего не создаётся без твоего подтверждения.</Text>
                         <Text className="text-sm text-muted-foreground">{editing.classificationProposal.reason}</Text>
@@ -957,6 +1009,16 @@ function ThoughtsApp() {
                         })}>Отклонить предложение</Action>
                     </Box>
                 ) : null}
+                <Box className="gap-2">
+                    <Action secondary disabled={busy || !editingText} onPress={() => void run(shareThought)}>
+                        Поделиться мыслью
+                    </Action>
+                    <Action secondary disabled={busy || !editingText} onPress={() => void run(() =>
+                        copyThought(editingText, 'Текст скопирован')
+                    )}>
+                        Скопировать текст
+                    </Action>
+                </Box>
                 <Field
                     label="Название"
                     value={editing?.title || ''}
