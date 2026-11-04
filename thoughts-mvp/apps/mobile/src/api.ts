@@ -13,6 +13,8 @@ export type Project = {
     createdAt: string
     updatedAt: string
     thoughtCount?: number
+    notionPageId?: string | null
+    notionPageRoot?: string | null
 }
 export type Thought = {
     localId?: string
@@ -92,7 +94,7 @@ export async function request<T>(endpoint: string, init?: RequestInit): Promise<
 }
 export const serverApi = {
     projects: () => request<Project[]>('/projects'),
-    createProject: (body: { name: string; description: string; color: string }) =>
+    createProject: (body: Pick<Project, 'name' | 'description' | 'color' | 'notionPageId'>) =>
         request<Project>('/projects', { method: 'POST', body: JSON.stringify(body) }),
     updateProject: (id: string, body: Partial<Project>) =>
         request<Project>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),

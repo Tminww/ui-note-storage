@@ -5,6 +5,7 @@ import {
     AppState,
     BackHandler,
     KeyboardAvoidingView,
+    Linking,
     Modal,
     Platform,
     Pressable,
@@ -69,6 +70,9 @@ function ThoughtsApp() {
     const [undoId, setUndoId] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [projectEditor, setProjectEditor] = useState<Partial<Project> | null>(null)
+    const savedProject = state.projects.find((project) => project.id === projectEditor?.id)
+    const linkedProjectPage = savedProject?.notionPageRoot === getNotionRoot()
+        ? savedProject?.notionPageId : null
     const [editing, setEditing] = useState<LocalThought | null>(null)
     const savedEditing = state.thoughts.find((t) => t.id === editing?.id)
     const hasUnsavedEdits = Boolean(editing && savedEditing && (['title', 'rawText', 'summary', 'projectId', 'category'] as const).some((key) => editing[key] !== savedEditing[key]))
@@ -477,7 +481,13 @@ function ThoughtsApp() {
                     </Box>
                     <Pressable
                         accessibilityLabel={`Изменить проект ${p.name}`}
-                        onPress={() => setProjectEditor({ ...p })}
+                        onPress={() => {
+                            setError('')
+                            setProjectEditor({
+                                ...p,
+                                notionPageId: p.notionPageRoot === getNotionRoot() ? p.notionPageId : undefined
+                            })
+                        }}
                         className="h-12 w-12 items-center justify-center"
                     >
                         <Icon name="create-outline" />
@@ -613,13 +623,14 @@ function ThoughtsApp() {
                         </Pressable>
                     ) : page === 'projects' ? (
                         <Action
-                            onPress={() =>
+                            onPress={() => {
+                                setError('')
                                 setProjectEditor({
                                     name: '',
                                     description: '',
                                     color: rgb(accents[0].light)
                                 })
-                            }
+                            }}
                         >
                             ＋ Создать
                         </Action>
@@ -780,6 +791,7 @@ function ThoughtsApp() {
                 title={projectEditor?.id ? 'Изменить проект' : 'Новый проект'}
                 onClose={() => setProjectEditor(null)}
             >
+                {error ? <Info warning>{error}</Info> : null}
                 <Field
                     label="Название"
                     value={projectEditor?.name || ''}
@@ -794,6 +806,24 @@ function ThoughtsApp() {
                     maxLength={400}
                     onChangeText={(v) => setProjectEditor({ ...projectEditor, description: v })}
                 />
+                <Field
+                    label="Страница проекта в Notion"
+                    placeholder="Ссылка или ID страницы"
+                    autoCapitalize="none"
+                    value={projectEditor?.notionPageId ?? ''}
+                    onChangeText={(value) => setProjectEditor({ ...projectEditor, notionPageId: value })}
+                />
+                <Text className="text-sm text-muted-foreground">
+                    Дай интеграции доступ к странице. Пустое поле возвращает заметки в папку проекта
+                    внутри общего хранилища Thoughts.
+                </Text>
+                {linkedProjectPage ? (
+                    <Action secondary onPress={() => void run(() =>
+                        Linking.openURL(`https://www.notion.so/${linkedProjectPage}`)
+                    )}>
+                        Открыть в Notion
+                    </Action>
+                ) : null}
                 <Text className="text-sm font-semibold">Цвет проекта</Text>
                 <Box className="flex-row gap-3">
                     {accents.map((a) => (
@@ -820,7 +850,8 @@ function ThoughtsApp() {
                             const body = {
                                 name: projectEditor.name || '',
                                 description: projectEditor.description || '',
-                                color: projectEditor.color || rgb(accents[0].light)
+                                color: projectEditor.color || rgb(accents[0].light),
+                                notionPageId: projectEditor.notionPageId
                             }
                             if (projectEditor.id) await api.updateProject(projectEditor.id, body)
                             else await api.createProject(body)

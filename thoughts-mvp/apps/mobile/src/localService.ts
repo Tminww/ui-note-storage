@@ -4,7 +4,7 @@ import * as Crypto from 'expo-crypto'
 import { createLocalRepository, type SyncAdapters, type EnrichmentResult } from './localCore'
 import { localDocument } from './localDocument'
 import { enrichNote, localSettings, saveLocalSettings } from './onDeviceAI'
-import { createNotionSyncAdapter, getNotionSnapshot } from './notionStorage'
+import { createNotionSyncAdapter, getNotionSnapshot, parseNotionProjectPage, verifyNotionProjectPage } from './notionStorage'
 import { getNotionRoot, hasSecret } from './deviceConfig'
 import { getApiUrl, request, serverApi, type AIConfig } from './api'
 
@@ -70,7 +70,7 @@ export function syncLocalData() {
                     body: JSON.stringify({
                         rawText: thought.rawText,
                         projectId: thought.projectLocked ? thought.projectId : null,
-                        projects,
+                        projects: projects.map(({ id, name, description }) => ({ id, name, description })),
                         categories: localRepository.snapshot().customCategories,
                         lockedCategory: thought.categoryLocked ? thought.category : null,
                         settings
@@ -83,6 +83,8 @@ export function syncLocalData() {
                 const snapshot = await getNotionSnapshot()
                 await localRepository.importRemote(snapshot.projects, snapshot.thoughts, snapshot.root)
                 adapters.notion = await createNotionSyncAdapter(snapshot)
+                const linkedError = snapshot.linkedErrors.values().next().value
+                if (linkedError) publish({ error: linkedError.message })
             } catch (error) {
                 publish({ error: error instanceof Error ? error.message : String(error) })
             }
@@ -137,11 +139,34 @@ const queue =
         void syncLocalData()
         return result
     }
+async function validateProjectPage(value: string | null | undefined, current?: string | null) {
+    if (value === undefined) return {}
+    const notionPageId = parseNotionProjectPage(value ?? '')
+    const notionPageRoot = notionPageId ? getNotionRoot() : null
+    if (notionPageId && notionPageId !== current) await verifyNotionProjectPage(notionPageId)
+    if (notionPageId && notionPageRoot !== getNotionRoot())
+        throw new Error('Общее хранилище Notion изменилось. Повтори привязку страницы')
+    return { notionPageId, notionPageRoot }
+}
 export const localApi = {
     projects: localRepository.projects,
     thoughts: localRepository.thoughts,
-    createProject: queue(localRepository.createProject),
-    updateProject: queue(localRepository.updateProject),
+    createProject: queue(async (body: Parameters<typeof localRepository.createProject>[0]) =>
+        localRepository.createProject({
+            ...body,
+            ...await validateProjectPage(body.notionPageId)
+        })
+    ),
+    updateProject: queue(async (id: string, body: Parameters<typeof localRepository.updateProject>[1]) => {
+        const current = localRepository.snapshot().projects.find((project) => project.id === id)
+        return localRepository.updateProject(id, {
+            ...body,
+            ...await validateProjectPage(
+                body.notionPageId,
+                current?.notionPageRoot === getNotionRoot() ? current?.notionPageId : null
+            )
+        })
+    }),
     deleteProject: queue(localRepository.deleteProject),
     createThought: queue(localRepository.createThought),
     updateThought: queue(localRepository.updateThought),

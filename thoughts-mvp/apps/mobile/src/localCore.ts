@@ -66,8 +66,9 @@ export type SyncAdapters = {
         project: (project: LocalProject, remoteId?: string) => Promise<string>
         thought: (
             thought: LocalThought,
-            remoteProjectId: string | null,
-            remoteId?: string
+            parentPageId: string | null,
+            remoteId?: string,
+            remoteProjectId?: string | null
         ) => Promise<string>
         remove: (id: string) => Promise<void>
     }
@@ -114,6 +115,12 @@ export function createLocalRepository(
     let writes: Promise<unknown> = Promise.resolve()
     let flight: Promise<void> | undefined
     const listeners = new Set<() => void>()
+    const ensureUniquePage = (state: LocalState, pageId?: string | null, projectId?: string) => {
+        if (pageId && state.projects.some((p) =>
+            !p.deleted && p.id !== projectId && p.notionPageId === pageId
+        ))
+            throw new Error('Эта страница Notion уже привязана к другому проекту')
+    }
     const read = async () => {
         const raw = await storage.load()
         if (raw !== null) {
@@ -214,9 +221,10 @@ export function createLocalRepository(
                 .filter((t) => !t.deleted)
                 .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         },
-        createProject: (body: { name: string; description: string; color: string }) =>
+        createProject: (body: Pick<Project, 'name' | 'description' | 'color' | 'notionPageId' | 'notionPageRoot'>) =>
             mutate((s) => {
                 if (!body.name.trim()) throw new Error('Укажи название проекта')
+                ensureUniquePage(s, body.notionPageId)
                 const p: LocalProject = {
                     ...body,
                     name: body.name.trim(),
@@ -236,6 +244,16 @@ export function createLocalRepository(
                 if (!p) throw new Error('Проект не найден')
                 for (const key of ['name', 'description', 'color'] as const)
                     if (body[key] !== undefined) p[key] = body[key]!
+                if (
+                    body.notionPageId !== undefined &&
+                    ((p.notionPageId ?? null) !== body.notionPageId || p.notionPageRoot !== body.notionPageRoot)
+                ) {
+                    ensureUniquePage(s, body.notionPageId, p.id)
+                    p.notionPageId = body.notionPageId
+                    p.notionPageRoot = body.notionPageRoot
+                    for (const thought of s.thoughts)
+                        if (!thought.deleted && thought.projectId === p.id) touch(thought)
+                }
                 touch(p)
                 return p
             }),
@@ -597,16 +615,21 @@ export function createLocalRepository(
                             continue
                         }
                         if (link?.revision === current.revision) continue
-                        const parent = current.projectId
+                        const project = current.projectId
                             ? state.projects.find((p) => p.id === current.projectId && !p.deleted)
-                                  ?.notion[destination.root]?.id
-                            : null
-                        if (current.projectId && !parent) continue
+                            : undefined
+                        const projectLink = project?.notion[destination.root]
+                        if (current.projectId && (!projectLink || projectLink.revision !== project?.revision))
+                            continue
+                        // The managed page remains the logical project ID even when notes live elsewhere.
+                        const linkedPage = project?.notionPageRoot === destination.root
+                            ? project.notionPageId : null
                         const captured = clone(current)
                         const remoteId = await destination.thought(
                             captured,
-                            parent || null,
-                            link?.id
+                            linkedPage || projectLink?.id || null,
+                            link?.id,
+                            projectLink?.id ?? null
                         )
                         await mutate((s) => {
                             const t = s.thoughts.find((t) => t.id === captured.id)!

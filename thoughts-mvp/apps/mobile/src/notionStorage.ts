@@ -14,6 +14,25 @@ const PREFIX_PROJECT = '📁 '
 const PREFIX_THOUGHT = '💭 '
 const META_PREFIX = 'THOUGHTS_V1:'
 const META_LABEL = 'Данные синхронизации Thoughts'
+const compactId = (id: string) => id.replace(/-/g, '').toLowerCase()
+const PAGE_ID = /(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i
+
+export function parseNotionProjectPage(value: string): string | null {
+    const input = value.trim()
+    if (!input) return null
+    const direct = input.match(PAGE_ID)
+    if (direct?.[0] === input) return compactId(input)
+    try {
+        const url = new URL(input)
+        if (url.protocol === 'https:' && /(^|\.)(notion\.so|notion\.site|notion\.com)$/.test(url.hostname)) {
+            const id = url.pathname.replace(/\/$/, '').match(PAGE_ID)?.[0]
+            if (id) return compactId(id)
+        }
+    } catch {
+        // Report a single validation error for both invalid URLs and IDs.
+    }
+    throw new Error('Вставь ссылку на страницу Notion или её ID')
+}
 const now = () => new Date().toISOString()
 const rich = (text: string) =>
     Array.from({ length: Math.ceil(text.length / 1800) }, (_, i) => ({
@@ -218,7 +237,9 @@ export async function getProjects(
                 color: meta?.color || '#6259E8',
                 createdAt: b.created_time || now(),
                 updatedAt: b.last_edited_time || now(),
-                thoughtCount: 0
+                thoughtCount: 0,
+                notionPageId: meta?.notionPageId ?? null,
+                notionPageRoot: meta?.notionPageId ? destinationRoot : null
             }
         })
     )
@@ -285,33 +306,50 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
         updatedAt: meta.updatedAt || b.last_edited_time || now()
     }
 }
-async function inFolder(id: string, loadBlocks: typeof getPageBlocks): Promise<Thought[]> {
+async function inFolder(id: string, loadBlocks: typeof getPageBlocks, linkedProjectId?: string): Promise<Thought[]> {
     const blocks = await loadBlocks(id)
     const notes = blocks.filter(
         (b) => b.type === 'child_page' && title(b).startsWith(PREFIX_THOUGHT)
     )
-    return Promise.all(
-        notes.map(async (b) =>
-            thoughtFrom(b, (await parseMeta<Partial<Thought>>(await loadBlocks(b.id))) || {})
-        )
-    )
+    const results = await Promise.all(notes.map(async (block) => {
+        const meta = await parseMeta<Partial<Thought> & { kind?: string }>(await loadBlocks(block.id))
+        if (linkedProjectId && (meta?.kind !== 'thought' || !meta.localId ||
+            compactId(meta.projectId ?? '') !== compactId(linkedProjectId))) return null
+        return thoughtFrom(block, meta || {})
+    }))
+    return results.filter((note) => note !== null)
 }
 export async function getNotionSnapshot() {
     const destinationRoot = root()
     const pending = new Map<string, ReturnType<typeof getPageBlocks>>()
     const loadBlocks = (pageId: string) => {
-        const cached = pending.get(pageId)
+        const key = compactId(pageId)
+        const cached = pending.get(key)
         if (cached) return cached
         const blocks = getPageBlocks(pageId)
-        pending.set(pageId, blocks)
+        pending.set(key, blocks)
         return blocks
     }
     const projects = await getProjects(destinationRoot, loadBlocks)
     const folders = [destinationRoot, ...projects.map((project) => project.id)]
-    const thoughts = (await Promise.all(folders.map((id) => inFolder(id, loadBlocks))))
+    const linkedErrors = new Map<string, Error>()
+    const linked = projects.filter((project) => project.notionPageId)
+    const thoughts = (await Promise.all([
+        ...folders.map((id) => inFolder(id, loadBlocks)),
+        ...linked.map(async (project) => {
+            const pageId = project.notionPageId!
+            try {
+                return await inFolder(pageId, loadBlocks, project.id)
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error)
+                linkedErrors.set(compactId(pageId), new Error(`${project.name}: ${detail}`))
+                return []
+            }
+        })
+    ]))
         .flat()
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    return { root: destinationRoot, projects, thoughts }
+    return { root: destinationRoot, projects, thoughts, linkedErrors }
 }
 export async function getThoughts(): Promise<Thought[]> {
     return (await getNotionSnapshot()).thoughts
@@ -437,9 +475,20 @@ export async function verifyNotionConnection() {
     await notion(`/pages/${root()}`)
 }
 
+export async function verifyNotionProjectPage(pageId: string) {
+    if (compactId(pageId) === compactId(root()))
+        throw new Error('Для проекта выбери отдельную страницу, отличную от общих входящих')
+    const page = await notion(`/pages/${pageId}`)
+    if (page.archived || page.in_trash) throw new Error('Эта страница Notion находится в корзине')
+    const meta = await parseMeta<{ kind?: string }>(await getPageBlocks(pageId))
+    if (meta?.kind === 'thought' || meta?.kind === 'project')
+        throw new Error('Выбери существующую страницу вне служебных страниц Thoughts')
+}
+
 /** One reconciliation snapshot per pass avoids blind create retries and N-squared reads. */
 export async function createNotionSyncAdapter(snapshot?: {
     root?: string
+    linkedErrors?: ReadonlyMap<string, Error>
     projects: Project[]
     thoughts: Thought[]
 }): Promise<NonNullable<SyncAdapters['notion']>> {
@@ -456,7 +505,8 @@ export async function createNotionSyncAdapter(snapshot?: {
                 name: local.name,
                 description: local.description,
                 color: local.color,
-                localRevision: local.revision
+                localRevision: local.revision,
+                notionPageId: local.notionPageRoot === destinationRoot ? local.notionPageId ?? null : null
             }
             if (!remote) {
                 const page = await createChild(destinationRoot, PREFIX_PROJECT + local.name, meta)
@@ -468,7 +518,9 @@ export async function createNotionSyncAdapter(snapshot?: {
             }
             return remote!
         },
-        thought: async (local: LocalThought, parent: string | null, remoteId?: string) => {
+        thought: async (local: LocalThought, parent: string | null, remoteId?: string, remoteProjectId = parent) => {
+            const linkedError = parent ? loaded.linkedErrors?.get(compactId(parent)) : undefined
+            if (linkedError) throw linkedError
             let remote = remoteId || thoughts.find((t) => t.localId === local.id)?.id
             const {
                 notion: _links,
@@ -483,7 +535,7 @@ export async function createNotionSyncAdapter(snapshot?: {
                 ...data,
                 kind: 'thought',
                 localId: local.id,
-                projectId: parent,
+                projectId: remoteProjectId,
                 localRevision: revision
             }
             if (!remote) {

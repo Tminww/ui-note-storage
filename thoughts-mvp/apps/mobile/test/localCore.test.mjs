@@ -279,6 +279,32 @@ test('lost create response is reconciled even when the local note was deleted', 
     assert.deepEqual(n.removed, ['remote-note'])
     assert.equal((await a.thoughts()).length, 0)
 })
+test('binding, unlinking and deleting a project moves notes without archiving the linked page', async () => {
+    const local = fixture().open()
+    const remote = notion()
+    const project = await local.createProject({ name: 'Музыка', description: '', color: '#123456' })
+    const note = await local.createThought('Ритм', project.id)
+    await local.flush({ notion: remote.adapter })
+    const registryId = local.snapshot().projects[0].notion.root.id
+    const noteId = remote.pages.get(note.id).remoteId
+    await local.updateProject(project.id, { notionPageId: 'existing-page', notionPageRoot: 'root' })
+    await local.flush({ notion: remote.adapter })
+    assert.equal(remote.pages.get(note.id).parent, 'existing-page')
+    assert.equal(remote.pages.get(note.id).remoteId, noteId)
+    await assert.rejects(
+        local.createProject({ name: 'Дубль', description: '', color: '#123456', notionPageId: 'existing-page', notionPageRoot: 'root' }),
+        /уже привязана/
+    )
+    await local.updateProject(project.id, { notionPageId: null })
+    await local.flush({ notion: remote.adapter })
+    assert.equal(remote.pages.get(note.id).parent, registryId)
+    await local.updateProject(project.id, { notionPageId: 'existing-page', notionPageRoot: 'root' })
+    await local.flush({ notion: remote.adapter })
+    await local.deleteProject(project.id)
+    await local.flush({ notion: remote.adapter })
+    assert.equal(remote.pages.get(note.id).parent, null)
+    assert.deepEqual(remote.removed, [registryId])
+})
 test('switching Notion root preserves a separate mapping for each destination', async () => {
     const a = fixture().open()
     await a.createThought('Test', null)
