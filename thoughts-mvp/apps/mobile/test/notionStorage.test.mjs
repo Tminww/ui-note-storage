@@ -29,6 +29,14 @@ async function fixture() {
             }
         ]
     ])
+    const nested = new Map()
+    const insertBlocks = (blocks) => blocks.map((block) => {
+        const id = `block-${++sequence}`
+        if (block.type !== 'toggle') return { ...block, id }
+        const { children, ...toggle } = block.toggle
+        nested.set(id, insertBlocks(children))
+        return { ...block, id, toggle, has_children: true }
+    })
     const calls = []
     const request = async (url, init = {}) => {
         const path = new URL(url).pathname.replace('/v1', ''),
@@ -45,7 +53,7 @@ async function fixture() {
                 id,
                 name: body.properties.title.title[0].text.content,
                 parent: body.parent.page_id,
-                blocks: body.children.map((b) => ({ ...b, id: `block-${++sequence}` }))
+                blocks: insertBlocks(body.children)
             })
             if (loseCreate) {
                 loseCreate = false
@@ -56,13 +64,13 @@ async function fixture() {
             const id = child[1]
             if (method === 'PATCH') {
                 result = {
-                    results: body.children.map((b) => ({ ...b, id: `block-${++sequence}` }))
+                    results: insertBlocks(body.children)
                 }
                 pages.get(id).blocks.push(...result.results)
             } else
                 result = {
                     results: [
-                        ...(pages.get(id)?.blocks || []),
+                        ...(pages.get(id)?.blocks || nested.get(id) || []),
                         ...[...pages.values()]
                             .filter((p) => p.parent === id && !p.archived)
                             .map((p) => ({
@@ -74,11 +82,12 @@ async function fixture() {
                     has_more: false
                 }
         } else if (block) {
-            for (const p of pages.values()) {
-                const b = p.blocks.find((b) => b.id === block[1])
-                if (!b) continue
-                if (method === 'PATCH') Object.assign(b, body)
-                if (method === 'DELETE') p.blocks = p.blocks.filter((b) => b.id !== block[1])
+            const blockId = block[1]
+            for (const blocks of [...[...pages.values()].map((page) => page.blocks), ...nested.values()]) {
+                const index = blocks.findIndex((block) => block.id === blockId)
+                if (index < 0) continue
+                if (method === 'PATCH') Object.assign(blocks[index], body)
+                if (method === 'DELETE') blocks.splice(index, 1)
             }
         } else if (page) {
             const p = pages.get(page[1])
@@ -106,15 +115,19 @@ async function fixture() {
     const api = await import(
         `data:text/javascript;base64,${Buffer.from(stub + source + `\n// ${Math.random()}`).toString('base64')}`
     )
-    return { api, pages, calls, loseNextCreate: () => (loseCreate = true) }
+    return { api, pages, nested, calls, loseNextCreate: () => (loseCreate = true) }
 }
 test('updating a project preserves user-authored Notion paragraphs', async () => {
     const f = await fixture()
     await f.api.updateProject('p', { description: 'Updated' })
     assert.ok(f.pages.get('p').blocks.some((b) => b.id === 'user-p'))
-    assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 0)
-    const meta = f.pages.get('p').blocks.find((b) => b.id === 'meta-p')
-    assert.match(meta.paragraph.rich_text[0].text.content, /Updated/)
+    assert.ok(!f.pages.get('p').blocks.some((b) => b.id === 'meta-p'))
+    const toggle = f.pages.get('p').blocks.find((b) => b.type === 'toggle')
+    assert.equal(toggle.toggle.rich_text[0].text.content, 'Данные синхронизации Thoughts')
+    assert.match(f.nested.get(toggle.id)[0].paragraph.rich_text[0].text.content, /Updated/)
+    assert.equal((await f.api.getProjects())[0].description, 'Updated')
+    await f.api.updateProject('p', { description: 'Updated again' })
+    assert.equal(f.pages.get('p').blocks.filter((b) => b.type === 'toggle').length, 1)
 })
 test('lost Notion create acknowledgement is reconciled by stable local ID', async () => {
     const f = await fixture()
@@ -175,5 +188,6 @@ test('updating thought text changes only recorded owned blocks', async () => {
         'New'
     )
     assert.ok(f.pages.get('n').blocks.some((b) => b.id === 'user-n'))
-    assert.equal(f.calls.filter((c) => c.method === 'DELETE').length, 0)
+    assert.deepEqual(f.calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/blocks/meta-n'])
+    assert.equal((await f.api.getThoughts())[0].rawText, 'New')
 })
