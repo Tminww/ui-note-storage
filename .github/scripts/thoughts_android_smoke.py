@@ -189,7 +189,7 @@ try:
     capture("12-updates")
     # Android shows a system clipboard overlay. Check copying last, so the
     # overlay cannot intercept taps in the navigation or voice scenarios.
-    tap("Мысли")
+    launch()
     tap("Открыть мысль:", contains=True)
     tap("Скопировать текст")
     find("Текст скопирован")
