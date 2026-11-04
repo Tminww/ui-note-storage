@@ -124,8 +124,6 @@ try:
     find("Исходный текст")
     find("На телефоне")
     find("Поделиться мыслью")
-    tap("Скопировать текст")
-    find("Текст скопирован")
     capture("05-note-editor")
     tap("Закрыть")
 
@@ -188,6 +186,13 @@ try:
     tap("Обновления", contains=True)
     find("Проверить обновления")
     capture("12-updates")
+    # Android shows a system clipboard overlay. Check copying last, so the
+    # overlay cannot intercept taps in the navigation or voice scenarios.
+    tap("Мысли")
+    tap("Открыть мысль:", contains=True)
+    tap("Скопировать текст")
+    find("Текст скопирован")
+    capture("15-copy-text")
     print("PASS: native layout, all tabs, project creation, note edit, offline save/relaunch, settings and themes; voice transcription, pause/resume, stop/reset and cancel through a CI-only Android speech service")
 except Exception:
     capture("failure")
