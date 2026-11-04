@@ -96,6 +96,7 @@ try:
     # so this verifies the embedded APK rather than replacing it with an OTA bundle.
     adb("shell", "svc", "wifi", "disable")
     adb("shell", "svc", "data", "disable")
+    adb('logcat', '-c')
     launch()
     find("Пока нет мыслей")
     check_bottom_navigation()
@@ -183,4 +184,4 @@ except Exception:
     capture("failure")
     raise
 finally:
-    (OUTPUT / "logcat.txt").write_text(adb("logcat", "-d", "-t", "3000"))
+    (OUTPUT / "logcat.txt").write_text(adb("logcat", "-d"))

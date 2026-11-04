@@ -1,6 +1,7 @@
 package dev.thoughts.speechfixture;
 
 import android.content.Intent;
+import android.content.ContextParams;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -8,6 +9,7 @@ import android.os.ParcelFileDescriptor;
 import android.speech.RecognitionService;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.util.Log;
 import java.util.ArrayList;
 import java.util.Arrays;
 
@@ -22,6 +24,11 @@ public class FixtureService extends RecognitionService {
         return data;
     }
     @Override protected void onStartListening(Intent intent, Callback callback) {
+        // RecognitionService requires a caller-attributed context before serving
+        // a session. This fixture emits scripted words and opens no microphone.
+        createContext(new ContextParams.Builder()
+            .setNextAttributionSource(callback.getCallingAttributionSource()).build());
+        Log.i("ThoughtsSpeechFixture", "start");
         handler.removeCallbacksAndMessages(null);
         active = callback;
         ParcelFileDescriptor source = intent.getParcelableExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, ParcelFileDescriptor.class);
@@ -45,6 +52,7 @@ public class FixtureService extends RecognitionService {
         });
     }
     @Override protected void onStopListening(Callback callback) {
+        Log.i("ThoughtsSpeechFixture", "stop");
         Callback current = active;
         handler.removeCallbacksAndMessages(null);
         if (current == null) return;
@@ -56,6 +64,7 @@ public class FixtureService extends RecognitionService {
         }, 2500);
     }
     @Override protected void onCancel(Callback callback) {
+        Log.i("ThoughtsSpeechFixture", "cancel");
         active = null;
         handler.removeCallbacksAndMessages(null);
     }
