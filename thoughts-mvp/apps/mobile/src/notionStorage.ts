@@ -1,7 +1,7 @@
 /** Serverless Notion storage: notes and projects are real Notion pages, not a fake local cache.
  *  Personal integration token must only be used on Android/iOS with SecureStore.
  *  Notes are child pages under the selected root page (Inbox) or under project pages.
- *  Metadata lives in the first paragraph block. All audio remains on device.
+ *  Metadata lives in a collapsed toggle block. All audio remains on device.
  */
 import type { Project, Thought, AIConfig } from './api'
 import { getNotionRoot, readSecret } from './deviceConfig'
@@ -13,6 +13,7 @@ const VERSION = '2025-09-03'
 const PREFIX_PROJECT = '📁 '
 const PREFIX_THOUGHT = '💭 '
 const META_PREFIX = 'THOUGHTS_V1:'
+const META_LABEL = 'Данные синхронизации Thoughts'
 const now = () => new Date().toISOString()
 const rich = (text: string) =>
     Array.from({ length: Math.ceil(text.length / 1800) }, (_, i) => ({
@@ -85,26 +86,54 @@ async function children(id: string): Promise<any[]> {
 async function getPageBlocks(id: string) {
     return children(id)
 }
-function parseMeta<T>(blocks: any[]): T | undefined {
-    const parts = blocks
-        .filter((b) => b.type === 'paragraph')
-        .map((b) =>
-            (b?.paragraph?.rich_text || [])
-                .map((x: any) => x.plain_text ?? x.text?.content ?? '')
+function blockText(block: any): string {
+    return (block[block.type]?.rich_text || [])
+        .map((item: any) => item.plain_text ?? item.text?.content ?? '')
+        .join('')
+}
+function metadataEntry(blocks: any[]) {
+    for (const block of blocks) {
+        if (block.type !== 'paragraph') continue
+        const text = blockText(block)
+        if (!text.startsWith(META_PREFIX)) continue
+        try {
+            const value = JSON.parse(text.slice(META_PREFIX.length))
+            if (value && typeof value === 'object' && !Array.isArray(value))
+                return { id: block.id, value }
+        } catch {
+            // Leave unrecognized content alone.
+        }
+    }
+}
+async function readMetadata(blocks: any[]) {
+    const legacy = metadataEntry(blocks)
+    for (const block of blocks) {
+        if (block.type !== 'toggle' || blockText(block) !== META_LABEL || !block.has_children)
+            continue
+        const current = metadataEntry(await children(block.id))
+        if (current) return { current, legacy }
+    }
+    return { legacy }
+}
+async function parseMeta<T>(blocks: any[]): Promise<T | undefined> {
+    const { current, legacy } = await readMetadata(blocks)
+    const entry = current || legacy
+    if (!entry) return undefined
+    return {
+        ...entry.value,
+        rawText:
+            entry.value.rawText ??
+            blocks.filter((block) => block.type === 'paragraph')
+                .map(blockText)
+                .filter((text) => !text.startsWith(META_PREFIX))
                 .join('')
-        )
-    const value = parts.find((v) => v.startsWith(META_PREFIX))
-    if (!value) return undefined
-    try {
-        const meta = JSON.parse(value.slice(META_PREFIX.length))
-        return {
-            ...meta,
-            rawText:
-                meta.rawText ??
-                parts.filter((x) => x !== value && !x.startsWith(META_PREFIX)).join('')
-        } as T
-    } catch {
-        return undefined
+    } as T
+}
+function metadataToggle(value: string) {
+    return {
+        object: 'block',
+        type: 'toggle',
+        toggle: { rich_text: rich(META_LABEL), children: [paragraph(value)] }
     }
 }
 async function createChild(parent: string, name: string, meta: object, raw?: string): Promise<any> {
@@ -113,7 +142,7 @@ async function createChild(parent: string, name: string, meta: object, raw?: str
         parent: { type: 'page_id', page_id: parent },
         properties: { title: { type: 'title', title: pageTitle(name) } },
         children: [
-            paragraph(
+            metadataToggle(
                 META_PREFIX +
                     JSON.stringify({ ...meta, ...(raw === undefined ? {} : { rawText: raw }) })
             )
@@ -122,26 +151,8 @@ async function createChild(parent: string, name: string, meta: object, raw?: str
 }
 async function updateMetadata(pageId: string, meta: object, raw?: string) {
     const blocks = await getPageBlocks(pageId)
-    const metadata = blocks.find(
-        (b) =>
-            b.type === 'paragraph' &&
-            (b.paragraph.rich_text || [])
-                .map((x: any) => x.plain_text ?? x.text?.content ?? '')
-                .join('')
-                .startsWith(META_PREFIX)
-    )
-    let previous: any = {}
-    if (metadata)
-        try {
-            previous = JSON.parse(
-                metadata.paragraph.rich_text
-                    .map((x: any) => x.plain_text ?? x.text?.content ?? '')
-                    .join('')
-                    .slice(META_PREFIX.length)
-            )
-        } catch {
-            /* preserve unrecognized content */
-        }
+    const { current, legacy } = await readMetadata(blocks)
+    const previous = (current || legacy)?.value || {}
     const owned: string[] = (previous._textBlocks || []).filter((id: string) =>
         blocks.some((b) => b.id === id)
     )
@@ -174,9 +185,11 @@ async function updateMetadata(pageId: string, meta: object, raw?: string) {
             ...meta,
             ...(raw === undefined ? {} : { rawText: raw, _textBlocks: nextIds })
         })
-    if (metadata)
-        await notion(`/blocks/${metadata.id}`, 'PATCH', { paragraph: { rich_text: rich(value) } })
-    else await notion(`/blocks/${pageId}/children`, 'PATCH', { children: [paragraph(value)] })
+    if (current)
+        await notion(`/blocks/${current.id}`, 'PATCH', { paragraph: { rich_text: rich(value) } })
+    else await notion(`/blocks/${pageId}/children`, 'PATCH', { children: [metadataToggle(value)] })
+    // Keep the old copy until the replacement is durable. A retry finds the toggle first.
+    if (legacy) await notion(`/blocks/${legacy.id}`, 'DELETE')
 }
 async function renamePage(id: string, name: string) {
     await notion(`/pages/${id}`, 'PATCH', {
@@ -192,7 +205,7 @@ export async function getProjects(): Promise<Project[]> {
     const rows = top.filter((b) => b.type === 'child_page' && title(b).startsWith(PREFIX_PROJECT))
     const result = await Promise.all(
         rows.map(async (b) => {
-            const meta = parseMeta<Partial<Project>>(await getPageBlocks(b.id))
+            const meta = await parseMeta<Partial<Project>>(await getPageBlocks(b.id))
             return {
                 id: b.id,
                 localId: meta?.localId,
@@ -276,7 +289,7 @@ async function inFolder(id: string): Promise<Thought[]> {
     )
     return Promise.all(
         notes.map(async (b) =>
-            thoughtFrom(b, parseMeta<Partial<Thought>>(await getPageBlocks(b.id)) || {})
+            thoughtFrom(b, (await parseMeta<Partial<Thought>>(await getPageBlocks(b.id))) || {})
         )
     )
 }
