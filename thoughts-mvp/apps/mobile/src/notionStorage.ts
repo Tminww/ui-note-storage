@@ -90,7 +90,7 @@ function root() {
     return id
 }
 function title(block: any): string {
-    return block?.child_page?.title || ''
+    return block?.child_page?.title || (block?.type === 'toggle' ? blockText(block) : '')
 }
 async function children(id: string): Promise<any[]> {
     let cursor: string | undefined
@@ -285,7 +285,7 @@ export async function updateProject(id: string, body: Partial<Project>): Promise
 export async function deleteProject(id: string) {
     // Do not archive a project with notes: it would hide all of its children.
     const notes = (await children(id)).filter(
-        (b) => b.type === 'child_page' && title(b).startsWith(PREFIX_THOUGHT)
+        (b) => (b.type === 'child_page' || b.type === 'toggle') && title(b).startsWith(PREFIX_THOUGHT)
     )
     if (notes.length) throw new Error('Сначала перенеси или удали заметки проекта в Notion.')
     await archivePage(id)
@@ -297,6 +297,9 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
         localId: meta.localId,
         localRevision: meta.localRevision,
         notionVersion: meta.notionVersion,
+        notionObject: b.type === 'toggle' ? 'toggle' : 'page',
+        notionParentId: b.type === 'toggle' ? b.parent?.page_id : undefined,
+        notionReplacesId: meta.notionReplacesId,
         rawText: meta.rawText || '',
         title: meta.title || title(b).slice(PREFIX_THOUGHT.length),
         summary: meta.summary || '',
@@ -318,6 +321,7 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
 }
 async function readThought(block: any, blocks: any[], linkedProjectId?: string): Promise<Thought | null> {
     const meta = await parseMeta<Partial<Thought> & { kind?: string; _textBlocks?: string[] }>(blocks)
+    if (block.type === 'toggle' && (meta?.kind !== 'thought' || !meta.localId)) return null
     if (linkedProjectId && (meta?.kind !== 'thought' || !meta.localId ||
         compactId(meta.projectId ?? '') !== compactId(linkedProjectId))) return null
     const result = thoughtFrom(block, meta || {})
@@ -325,7 +329,7 @@ async function readThought(block: any, blocks: any[], linkedProjectId?: string):
 
     const titleOnPage = title(block).replace(/^💭 /, '')
     const renamed = Boolean(title(block)) &&
-        titleOnPage !== pageTitle(PREFIX_THOUGHT + result.title)[0].text.content.slice(PREFIX_THOUGHT.length)
+        titleOnPage !== (block.type === 'toggle' ? result.title.slice(0, 90) : pageTitle(PREFIX_THOUGHT + result.title)[0].text.content.slice(PREFIX_THOUGHT.length))
     const owned = Array.isArray(meta._textBlocks)
         ? blocks.filter((item) => meta._textBlocks!.includes(item.id))
         : []
@@ -352,10 +356,10 @@ async function inFolder(
 ): Promise<Thought[]> {
     const blocks = await loadBlocks(id)
     const notes = blocks.filter(
-        (b) => b.type === 'child_page' && (title(b).startsWith(PREFIX_THOUGHT) || knownThoughts.has(compactId(b.id)))
+        (b) => (b.type === 'child_page' || b.type === 'toggle') && (title(b).startsWith(PREFIX_THOUGHT) || knownThoughts.has(compactId(b.id)))
     )
     const results = await Promise.all(notes.map(async (block) => {
-        return readThought(block, await loadBlocks(block.id), linkedProjectId)
+        return readThought({ ...block, parent: { page_id: id } }, await loadBlocks(block.id), linkedProjectId)
     }))
     return results.filter((note) => note !== null)
 }
@@ -390,7 +394,8 @@ export async function getNotionSnapshot(knownThoughtIds: string[] = []) {
     ]))
         .flat()
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    return { root: destinationRoot, projects, thoughts, linkedErrors }
+    const replaced = new Set(thoughts.map((t) => t.notionReplacesId).filter(Boolean))
+    return { root: destinationRoot, projects, thoughts: thoughts.filter((t) => !replaced.has(t.id)), linkedErrors }
 }
 export async function getThoughts(): Promise<Thought[]> {
     return (await getNotionSnapshot()).thoughts
@@ -586,7 +591,7 @@ export async function createNotionSyncAdapter(snapshot?: {
         thought: async (local: LocalThought, parent: string | null, remoteId?: string, remoteProjectId = parent) => {
             const linkedError = parent ? loaded.linkedErrors?.get(compactId(parent)) : undefined
             if (linkedError) throw linkedError
-            let remote = remoteId || thoughts.find((t) => t.localId === local.id)?.id
+            let remote = thoughts.find((t) => t.localId === local.id)?.id || remoteId
             const {
                 notion: _links,
                 notionErrors: _notionErrors,
@@ -608,41 +613,71 @@ export async function createNotionSyncAdapter(snapshot?: {
                 localRevision: revision,
                 notionVersion: syncVersion ?? `${revision}:${local.updatedAt}`
             }
-            if (!remote) {
-                const page = await createChild(
-                    parent || destinationRoot,
-                    PREFIX_THOUGHT + local.title,
-                    meta,
-                    local.rawText
-                )
-                remote = page.id
-                thoughts.push({ ...local, id: remote!, localId: local.id })
-            } else {
-                const page: any = await notion(`/pages/${remote}`)
+            const target = parent || destinationRoot
+            // Read blocks for both page notes from older versions and current toggle notes.
+            let object: any
+            let replaced = thoughts.find((t) => t.id === remote)?.notionReplacesId
+            if (remote) {
+                object = await notion(`/blocks/${remote}`)
+                // Legacy child pages are also blocks; fetch page details for their title/parent.
+                if (object.type !== 'toggle') {
+                    const page = await notion(`/pages/${remote}`)
+                    object = { ...page, type: 'child_page', child_page: { title: pageName(page) } }
+                }
                 const expected = local.notion[destinationRoot]?.version
                 if (expected) {
-                    const latest = await readThought({
-                        id: remote,
-                        child_page: { title: pageName(page) }
-                    }, await getPageBlocks(remote))
+                    const latest = await readThought(object, await getPageBlocks(remote))
                     if (latest && notionVersionOf(latest) !== expected && latest.notionVersion !== meta.notionVersion)
                         throw new Error('Страница изменилась в Notion. Сначала получим свежую версию.')
                 }
-                if (
-                    page.parent?.page_id?.replace(/-/g, '') !==
-                    (parent || destinationRoot).replace(/-/g, '')
-                )
-                    await notion(`/pages/${remote}/move`, 'POST', {
-                        parent: { type: 'page_id', page_id: parent || destinationRoot }
-                    })
+                if (compactId(object.parent?.page_id || '') !== compactId(target)) {
+                    if (object.type !== 'toggle') {
+                        await notion(`/pages/${remote}/move`, 'POST', {
+                            parent: { type: 'page_id', page_id: target }
+                        })
+                    } else {
+                        const blocks = await getPageBlocks(remote)
+                        const metadata = await readMetadata(blocks)
+                        const owned = (metadata.current || metadata.legacy)?.value._textBlocks || []
+                        if (blocks.some((b) => !owned.includes(b.id) &&
+                            !(b.type === 'toggle' && blockText(b) === META_LABEL)))
+                            throw new Error('В заметке есть дополнительные блоки Notion. Перенеси её в нужную страницу в Notion, чтобы сохранить их.')
+                        // Blocks cannot be moved through the API. Commit a replacement first.
+                        replaced = remote
+                        remote = undefined
+                    }
+                }
             }
-            await renamePage(remote!, PREFIX_THOUGHT + local.title)
-            await updateMetadata(remote!, meta, local.rawText, local.summary)
-            return remote!
+            if (!remote) {
+                const created = await notion(`/blocks/${target}/children`, 'PATCH', {
+                    children: [{ object: 'block', type: 'toggle', toggle: {
+                        rich_text: rich(PREFIX_THOUGHT + local.title.slice(0, 90)),
+                        children: [metadataToggle(META_PREFIX + JSON.stringify({
+                            ...meta, rawText: local.rawText, notionReplacesId: replaced
+                        }))]
+                    } }]
+                })
+                remote = created.results[0].id
+                object = { type: 'toggle' }
+                thoughts.push({ ...local, id: remote!, localId: local.id, notionObject: 'toggle', notionParentId: target })
+            }
+            if (object.type === 'toggle') {
+                await notion(`/blocks/${remote}`, 'PATCH', {
+                    toggle: { rich_text: rich(PREFIX_THOUGHT + local.title.slice(0, 90)) }
+                })
+            } else await renamePage(remote!, PREFIX_THOUGHT + local.title)
+            await updateMetadata(remote!, { ...meta, notionReplacesId: replaced }, local.rawText, local.summary)
+            if (replaced) await notion(`/blocks/${replaced}`, 'DELETE')
+            return object.type === 'toggle' ? { id: remote!, parentId: target } : remote!
         },
         remove: async (id: string) => {
-            const page: any = await notion(`/pages/${id}`)
-            if (!page.archived && !page.in_trash) await archivePage(id)
+            const block = await notion(`/blocks/${id}`)
+            if (block.type === 'toggle') {
+                if (!block.archived && !block.in_trash) await notion(`/blocks/${id}`, 'DELETE')
+            } else {
+                const page = await notion(`/pages/${id}`)
+                if (!page.archived && !page.in_trash) await archivePage(id)
+            }
         }
     }
 }

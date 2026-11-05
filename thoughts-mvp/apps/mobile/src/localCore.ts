@@ -10,7 +10,7 @@ export type Preferences = {
     voiceReview: boolean
     haptics: boolean
 }
-export type RemoteLink = { id: string; revision: number; version?: string }
+export type RemoteLink = { id: string; revision: number; version?: string; parentId?: string }
 export type LocalProject = Project & {
     revision: number
     deleted: boolean
@@ -76,7 +76,7 @@ export type SyncAdapters = {
             parentPageId: string | null,
             remoteId?: string,
             remoteProjectId?: string | null
-        ) => Promise<string>
+        ) => Promise<string | { id: string; parentId: string }>
         remove: (id: string) => Promise<void>
     }
 }
@@ -195,7 +195,7 @@ export function createLocalRepository(
         local.aiPending = remote.status === 'pending'
         delete local.aiFeedback
         local.attempts = local.retryAt = 0
-        local.notion[root] = { id: remote.id, revision: local.revision, version: notionVersionOf(remote) }
+        local.notion[root] = { id: remote.id, parentId: remote.notionParentId, revision: local.revision, version: notionVersionOf(remote) }
         if (local.notionConflicts) delete local.notionConflicts[root]
         if (local.notionErrors) delete local.notionErrors[root]
     }
@@ -544,7 +544,7 @@ export function createLocalRepository(
                         let link = existing.notion[root]
                         if (!link) {
                             link = existing.notion[root] = {
-                                id: remote.id,
+                                id: remote.id, parentId: remote.notionParentId,
                                 revision: remote.notionVersion && remote.notionVersion === existing.syncVersion
                                     ? existing.revision
                                     : remote.localId ? (remote.localRevision ?? 0) : existing.revision,
@@ -553,11 +553,13 @@ export function createLocalRepository(
                         }
                         if (existing.deleted) continue
                         if (link.version === version) {
+                            link.id = remote.id
+                            link.parentId = remote.notionParentId
                             if (existing.notionConflicts) delete existing.notionConflicts[root]
                             continue
                         }
                         if (remote.notionVersion && remote.notionVersion === existing.syncVersion) {
-                            existing.notion[root] = { id: remote.id, revision: existing.revision, version }
+                            existing.notion[root] = { id: remote.id, parentId: remote.notionParentId, revision: existing.revision, version }
                             if (existing.notionConflicts) delete existing.notionConflicts[root]
                         } else if (!link.version && !remote.notionVersion && remote.localRevision === link.revision &&
                             (link.revision !== existing.revision || remote.updatedAt === existing.updatedAt)) {
@@ -579,7 +581,7 @@ export function createLocalRepository(
                         attempts: 0,
                         retryAt: 0,
                         notion:
-                            source === 'notion' ? { [root]: { id: remote.id, revision: 1, version: notionVersionOf(remote) } } : {}
+                            source === 'notion' ? { [root]: { id: remote.id, parentId: remote.notionParentId, revision: 1, version: notionVersionOf(remote) } } : {}
                     })
                 }
             }),
@@ -743,7 +745,7 @@ export function createLocalRepository(
                         await mutate((s) => {
                             const t = s.thoughts.find((t) => t.id === captured.id)!
                             t.notion[destination.root] = {
-                                id: remoteId,
+                                ...(typeof remoteId === 'string' ? { id: remoteId } : remoteId),
                                 revision: captured.revision,
                                 version: captured.syncVersion ?? `${captured.revision}:${captured.updatedAt}`
                             }
