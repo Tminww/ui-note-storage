@@ -189,6 +189,7 @@ test('updating thought text changes only recorded owned blocks', async () => {
             id: 'local-note',
             title: 'Updated',
             rawText: 'New',
+            summary: '- One\n- Two',
             projectId: null,
             revision: 2,
             notion: {},
@@ -201,11 +202,12 @@ test('updating thought text changes only recorded owned blocks', async () => {
     )
     assert.equal(
         f.pages.get('n').blocks.find((b) => b.id === 'owned').paragraph.rich_text[0].text.content,
-        'New'
+        'Резюме\n• One\n• Two\n\nИсходный текст\nNew'
     )
     assert.ok(f.pages.get('n').blocks.some((b) => b.id === 'user-n'))
     assert.deepEqual(f.calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/blocks/meta-n'])
     assert.equal((await f.api.getThoughts())[0].rawText, 'New')
+    assert.equal((await f.api.getThoughts())[0].summary, '- One\n- Two')
 })
 
 test('a linked page recovers only app notes for its registered project', async () => {
