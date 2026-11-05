@@ -163,7 +163,9 @@ function ThoughtsApp() {
     const review = thoughts.filter((t) => t.status === 'needs_review')
     const inboxReview = review.filter((t) => !t.aiPending)
     const notionRoot = getNotionRoot()
-    const notionPending = thoughts.filter((t) => t.notion[notionRoot]?.revision !== t.revision).length
+    const notionPending = thoughts.filter((t) =>
+        t.notion[notionRoot]?.revision !== t.revision || t.notionConflicts?.[notionRoot]
+    ).length
     const projectName = (id: string | null) => projects.find((p) => p.id === id)?.name || 'Входящие'
     const notionStatus = (note: LocalThought) => {
         const link = note.notion[notionRoot]
@@ -350,90 +352,90 @@ function ThoughtsApp() {
         const status = notionStatus(t)
         const showReviewActions = page === 'thoughts' && selected === 'review'
         const suggestedProject = t.classificationProposal?.project
-        const canAcceptProject = suggestedProject || t.projectId
+        const canAcceptProject = suggestedProject || (t.projectId && !t.projectLocked)
         const color = state.preferences.projectColors
             ? projects.find((p) => p.id === t.projectId)?.color
             : undefined
         return (
             <Box key={t.id} className="rounded-2xl border border-border bg-card">
-            <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Открыть мысль: ${t.title}`}
-                onPress={() => {
-                    setError('')
-                    setCopyNotice('')
-                    setNoteMode('read')
-                    setNoteMenu(false)
-                    setEditing({ ...t })
-                }}
-                className="gap-2 rounded-2xl p-4 active:bg-muted"
-            >
-                <Text className="text-base font-semibold leading-6" numberOfLines={2}>{t.title || t.rawText}</Text>
-                {t.summary || (t.title && t.title !== t.rawText) ? (
-                    <Text className="text-sm leading-5 text-muted-foreground" numberOfLines={2}>
-                        {t.summary || t.rawText}
-                    </Text>
-                ) : null}
-                <Box className="flex-row items-center justify-between gap-3">
-                    <Box className="flex-row items-center gap-2 rounded-full bg-secondary px-3 py-1">
-                        {color ? (
-                            <Box
-                                className="h-2 w-2 rounded-full"
-                                style={{ backgroundColor: color }}
-                            />
-                        ) : null}
-                        <Text className="text-xs font-semibold text-primary">
-                            {projectName(t.projectId)}
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Открыть мысль: ${t.title}`}
+                    onPress={() => {
+                        setError('')
+                        setCopyNotice('')
+                        setNoteMode('read')
+                        setNoteMenu(false)
+                        setEditing({ ...t })
+                    }}
+                    className="gap-2 rounded-2xl p-4 active:bg-muted"
+                >
+                    <Text className="text-base font-semibold leading-6" numberOfLines={2}>{t.title || t.rawText}</Text>
+                    {t.summary || (t.title && t.title !== t.rawText) ? (
+                        <Text className="text-sm leading-5 text-muted-foreground" numberOfLines={2}>
+                            {t.summary || t.rawText}
+                        </Text>
+                    ) : null}
+                    <Box className="flex-row items-center justify-between gap-3">
+                        <Box className="flex-row items-center gap-2 rounded-full bg-secondary px-3 py-1">
+                            {color ? (
+                                <Box
+                                    className="h-2 w-2 rounded-full"
+                                    style={{ backgroundColor: color }}
+                                />
+                            ) : null}
+                            <Text className="text-xs font-semibold text-primary">
+                                {projectName(t.projectId)}
+                            </Text>
+                        </Box>
+                        <Text className="text-xs text-muted-foreground">
+                            {new Date(t.createdAt).toLocaleTimeString('ru-RU', {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })}
                         </Text>
                     </Box>
-                    <Text className="text-xs text-muted-foreground">
-                        {new Date(t.createdAt).toLocaleTimeString('ru-RU', {
-                            hour: '2-digit',
-                            minute: '2-digit'
-                        })}
-                    </Text>
-                </Box>
-                {status.error ? <Text className="text-xs text-destructive">{status.label}</Text> : null}
-                {!showReviewActions && (t.aiPending || t.status === 'needs_review') ? (
-                    <Text className="text-xs text-muted-foreground">
-                        {t.aiPending
-                            ? sync.online
-                                ? 'Ждёт обработки AI'
-                                : 'AI обработает после подключения'
-                            : 'На проверку'}
-                    </Text>
-                ) : null}
-            </Pressable>
-            {showReviewActions ? (
-                <Box className="flex-row flex-wrap gap-2 border-t border-border px-4 py-2">
-                    {canAcceptProject ? (
-                        <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center rounded-xl bg-secondary px-3"
-                            onPress={() => {
-                                if (!suggestedProject || !t.classificationProposal) {
-                                    assignReviewProject(t, t.projectId)
-                                    return
-                                }
-                                const proposal = t.classificationProposal
-                                void run(async () => {
-                                    await localRepository.confirmClassification(t.id, t.revision, proposal, true)
-                                    void syncLocalData()
-                                })
-                            }}>
-                            <Text className="text-sm font-semibold text-primary">
-                                Принять «{suggestedProject?.name ?? projectName(t.projectId)}»
-                            </Text>
-                        </Pressable>
+                    {status.error ? <Text className="text-xs text-destructive">{status.label}</Text> : null}
+                    {!showReviewActions && (t.aiPending || t.status === 'needs_review') ? (
+                        <Text className="text-xs text-muted-foreground">
+                            {t.aiPending
+                                ? sync.online
+                                    ? 'Ждёт обработки AI'
+                                    : 'AI обработает после подключения'
+                                : 'На проверку'}
+                        </Text>
                     ) : null}
-                    <Pressable accessibilityRole="button" disabled={busy || !projects.length} className="min-h-11 justify-center px-2"
-                        onPress={() => setReviewPicker(t)}>
-                        <Text className={`text-sm ${projects.length ? 'text-primary' : 'text-muted-foreground'}`}>Выбрать проект</Text>
-                    </Pressable>
-                    <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center px-2"
-                        onPress={() => assignReviewProject(t, null)}>
-                        <Text className="text-sm">Оставить во входящих</Text>
-                    </Pressable>
-                </Box>
-            ) : null}
+                </Pressable>
+                {showReviewActions ? (
+                    <Box className="flex-row flex-wrap gap-2 border-t border-border px-4 py-2">
+                        {canAcceptProject ? (
+                            <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center rounded-xl bg-secondary px-3"
+                                onPress={() => {
+                                    if (!suggestedProject || !t.classificationProposal) {
+                                        assignReviewProject(t, t.projectId)
+                                        return
+                                    }
+                                    const proposal = t.classificationProposal
+                                    void run(async () => {
+                                        await localRepository.confirmClassification(t.id, t.revision, proposal, true)
+                                        void syncLocalData()
+                                    })
+                                }}>
+                                <Text className="text-sm font-semibold text-primary">
+                                    Принять «{suggestedProject?.name ?? projectName(t.projectId)}»
+                                </Text>
+                            </Pressable>
+                        ) : null}
+                        <Pressable accessibilityRole="button" disabled={busy || !projects.length} className="min-h-11 justify-center px-2"
+                            onPress={() => setReviewPicker(t)}>
+                            <Text className={`text-sm ${projects.length ? 'text-primary' : 'text-muted-foreground'}`}>Выбрать проект</Text>
+                        </Pressable>
+                        <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center px-2"
+                            onPress={() => assignReviewProject(t, null)}>
+                            <Text className="text-sm">Оставить во входящих</Text>
+                        </Pressable>
+                    </Box>
+                ) : null}
             </Box>
         )
     }
