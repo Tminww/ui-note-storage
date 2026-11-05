@@ -1,6 +1,6 @@
-/** Serverless Notion storage: notes and projects are real Notion pages, not a fake local cache.
+/** Direct Notion storage: projects are pages and new notes are collapsible toggle blocks.
  *  Personal integration token must only be used on Android/iOS with SecureStore.
- *  Notes are child pages under the selected root page (Inbox) or under project pages.
+ *  Older note pages remain supported alongside toggles in the selected destination.
  *  Metadata lives in a collapsed toggle block. All audio remains on device.
  */
 import type { Project, Thought, AIConfig } from './api'
