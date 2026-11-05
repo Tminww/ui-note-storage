@@ -15,7 +15,7 @@ import {
     StatusBar,
     TextInput
 } from 'react-native'
-import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { SafeAreaView } from './components/ui/safe-area'
 import * as Haptics from 'expo-haptics'
 import * as Clipboard from 'expo-clipboard'
@@ -69,6 +69,7 @@ export default function App() {
     )
 }
 function ThoughtsApp() {
+    const { top } = useSafeAreaInsets()
     const state = useSyncExternalStore(
         localRepository.subscribe,
         localRepository.snapshot,
@@ -680,6 +681,7 @@ function ThoughtsApp() {
             <KeyboardAvoidingView
                 className="mx-auto w-full max-w-3xl flex-1"
                 behavior={Platform.OS === 'web' ? undefined : 'padding'}
+                keyboardVerticalOffset={top}
             >
                 <Box className="min-h-24 flex-row items-center gap-3 px-5 py-4">
                     {page === 'settings' && section !== 'home' ? (
