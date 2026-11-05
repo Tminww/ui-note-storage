@@ -315,9 +315,11 @@ export function createLocalRepository(
                 s.draft = ''
                 return t
             }),
-        updateThought: (noteId: string, body: Partial<Thought>) =>
+        updateThought: (noteId: string, body: Partial<Thought>, revision?: number) =>
             mutate((s) => {
                 const t = findNote(s, noteId)
+                if (revision !== undefined && t.revision !== revision)
+                    throw new Error('Мысль изменилась. Открой её ещё раз.')
                 const changedText = body.rawText !== undefined && body.rawText !== t.rawText
                 for (const key of ['title', 'rawText', 'summary', 'category', 'status'] as const)
                     if (body[key] !== undefined) Object.assign(t, { [key]: body[key] })
@@ -352,7 +354,7 @@ export function createLocalRepository(
                 touch(t)
                 return t
             }),
-        confirmClassification: (noteId: string, revision: number, proposal: ClassificationProposal) =>
+        confirmClassification: (noteId: string, revision: number, proposal: ClassificationProposal, projectOnly = false) =>
             mutate((s) => {
                 const t = findNote(s, noteId)
                 if (t.revision !== revision || !t.classificationProposal)
@@ -369,7 +371,7 @@ export function createLocalRepository(
                     t.projectId = project.id
                     t.projectLocked = true
                 }
-                if (pending.category && !t.categoryLocked) {
+                if (!projectOnly && pending.category && !t.categoryLocked) {
                     const candidate = namedSuggestion(proposal.category)
                     if (!candidate) throw new Error('Укажи название типа')
                     let category = allTypes(s.customCategories).find((c) => normalizedName(c.name) === normalizedName(candidate.name))
@@ -381,8 +383,11 @@ export function createLocalRepository(
                     t.categoryDefinition = category
                     t.categoryLocked = true
                 }
-                t.classificationProposal = null
-                t.status = t.projectId && !(pending.unresolved?.category && !pending.category) ? 'ready' : 'needs_review'
+                t.classificationProposal = projectOnly && pending.category && !t.categoryLocked
+                    ? { ...pending, project: undefined, unresolved: { project: false, category: true } }
+                    : null
+                t.status = t.projectId && !t.classificationProposal && !(pending.unresolved?.category && !pending.category)
+                    ? 'ready' : 'needs_review'
                 t.aiPending = Boolean(t.aiFeedback)
                 t.errorMessage = null
                 t.attempts = t.retryAt = 0

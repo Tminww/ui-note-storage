@@ -68,3 +68,25 @@ test('confirmed types survive Notion export/import and manual type locks resist 
     assert.equal(other.snapshot().customCategories[0].name, 'Покупка')
     assert.equal(other.snapshot().thoughts[0].category, f.note().category)
 })
+
+test('accepting the suggested project alone does not create a proposed type', async () => {
+    let stored = null
+    let sequence = 0
+    const repository = createLocalRepository({
+        load: async () => stored,
+        save: async (value) => { stored = value }
+    }, () => String(++sequence))
+    const thought = await repository.createThought('Разобрать грядки', null)
+    const proposal = {
+        project: { name: 'Сад', description: '' },
+        category: { name: 'Уход', description: '' },
+        reason: 'Садовые работы', model: 'test'
+    }
+    await repository.flush({ enrich: async () => ({ classificationProposal: proposal, status: 'needs_review' }) })
+    const pending = repository.snapshot().thoughts[0]
+    const saved = await repository.confirmClassification(thought.id, pending.revision, proposal, true)
+    assert.equal(repository.snapshot().projects[0].name, 'Сад')
+    assert.equal(repository.snapshot().customCategories.length, 0)
+    assert.equal(saved.classificationProposal.category.name, 'Уход')
+    assert.equal(saved.classificationProposal.project, undefined)
+})
