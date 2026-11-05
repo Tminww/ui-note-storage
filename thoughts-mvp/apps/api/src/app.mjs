@@ -111,6 +111,23 @@ export function createApp({ repository, ai, env = process.env } = {}) {
                 return send(res, 200, { ok: true, storage: env.STORAGE_DRIVER || 'sqlite' })
             if (req.method === 'GET' && path === '/api/config')
                 return send(res, 200, getAIOptions(env))
+            if (req.method === 'POST' && path === '/api/enrich/revise') {
+                const data = await parseBody(req)
+                const rawText = requiredString(data.rawText, 10000, 'Мысль')
+                const instruction = requiredString(data.instruction, 1000, 'Правка')
+                const title = optionalString(data.title, 140, 'Название') || ''
+                const summary = optionalString(data.summary, 800, 'Резюме') || ''
+                const tags = Array.isArray(data.tags)
+                    ? data.tags.filter((tag) => typeof tag === 'string').slice(0, 4).map((tag) => tag.slice(0, 100))
+                    : []
+                const settings = { ...repo.getSettings(), ...validateSettings(data.settings || {}) }
+                try {
+                    const result = await aiClient.generate(settings, rawText, { instruction, title, summary, tags })
+                    return send(res, 200, { ...result, generatorModel: settings.generatorModel, errorMessage: null })
+                } catch (error) {
+                    throw new HttpError(502, String(error.message || error).slice(0, 500))
+                }
+            }
             if (req.method === 'POST' && path === '/api/enrich') {
                 const data = await parseBody(req)
                 const rawText = requiredString(data.rawText, 10000, 'Мысль')

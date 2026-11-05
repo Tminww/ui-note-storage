@@ -534,6 +534,7 @@ export async function createNotionSyncAdapter(snapshot?: {
                 revision,
                 deleted: _deleted,
                 aiPending: _pending,
+                aiFeedback: _feedback,
                 attempts: _attempts,
                 retryAt: _retry,
                 ...data
