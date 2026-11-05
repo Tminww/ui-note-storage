@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --experimental-sqlite src/server.mjs",
+    "notion-oauth": "node src/notionOAuthServer.mjs",
     "test": "node --experimental-sqlite --test test/*.test.mjs"
   },
   "engines": {"node": ">=22.13.0"}

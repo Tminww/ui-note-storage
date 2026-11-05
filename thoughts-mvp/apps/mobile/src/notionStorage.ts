@@ -5,7 +5,8 @@
  */
 import type { Project, Thought, AIConfig } from './api'
 import * as Crypto from 'expo-crypto'
-import { getNotionRoot, readSecret } from './deviceConfig'
+import { getNotionOAuth, getNotionRoot, readSecret } from './deviceConfig'
+import { refreshNotionStorage } from './notionOAuth'
 import { enrichNote, localSettings, saveLocalSettings } from './onDeviceAI'
 import type { LocalProject, LocalThought, SyncAdapters } from './localCore'
 import { notionVersionOf } from './localCore'
@@ -48,35 +49,32 @@ const paragraph = (text: string) => ({
 })
 const pageTitle = (s: string) => [{ type: 'text', text: { content: s.slice(0, 140) } }]
 
-async function notion<T = any>(path: string, method = 'GET', body?: unknown): Promise<T> {
-    const token = await readSecret('notion')
-    if (!token) throw new Error('В настройках добавь токен Notion (можно вставить из Bitwarden).')
-    let response = await fetch(`${BASE}${path}`, {
+async function notion<T = any>(path: string, method = 'GET', body?: unknown, explicitToken?: string): Promise<T> {
+    const oauth = explicitToken ? null : getNotionOAuth()
+    let token = explicitToken ?? oauth?.accessToken ?? await readSecret('notion')
+    if (!token) throw new Error('Подключи Notion в настройках.')
+    const request = (accessToken: string) => fetch(`${BASE}${path}`, {
         signal: AbortSignal.timeout(30000),
         method,
         headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${accessToken}`,
             'Notion-Version': VERSION,
             'Content-Type': 'application/json'
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
     })
+    let response = await request(token)
+    if (response.status === 401 && oauth) {
+        token = await refreshNotionStorage(oauth)
+        response = await request(token)
+    }
     if (response.status === 429) {
         const delay = Math.min(
             5000,
             Math.max(1000, Number(response.headers.get('retry-after') || 1) * 1000)
         )
         await new Promise((resolve) => setTimeout(resolve, delay))
-        response = await fetch(`${BASE}${path}`, {
-            signal: AbortSignal.timeout(30000),
-            method,
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Notion-Version': VERSION,
-                'Content-Type': 'application/json'
-            },
-            ...(body === undefined ? {} : { body: JSON.stringify(body) })
-        })
+        response = await request(token)
     }
     const data = await response.json().catch(() => ({}))
     if (!response.ok)
@@ -85,6 +83,7 @@ async function notion<T = any>(path: string, method = 'GET', body?: unknown): Pr
         )
     return data as T
 }
+
 function root() {
     const id = getNotionRoot()
     if (!id) throw new Error('В настройках укажи страницу Notion для хранения мыслей.')
@@ -513,8 +512,30 @@ export const notionStorage = {
     })
 }
 
-export async function verifyNotionConnection() {
-    await notion(`/pages/${root()}`)
+const pageName = (page: { properties?: Record<string, { type: string; title?: { plain_text?: string; text?: { content: string } }[] }> }) =>
+    Object.values(page.properties ?? {}).find((property) => property.type === 'title')
+        ?.title?.map((part) => part.plain_text ?? part.text?.content ?? '').join('').trim() || null
+
+export type NotionPageChoice = { id: string; title: string }
+
+export async function searchNotionPages(query: string, cursor?: string, token?: string) {
+    const data = await notion('/search', 'POST', {
+        ...(query.trim() ? { query: query.trim() } : {}),
+        ...(cursor ? { start_cursor: cursor } : {}),
+        page_size: 25,
+        filter: { property: 'object', value: 'page' }
+    }, token)
+    const pages: NotionPageChoice[] = (data.results || [])
+        .filter((page: any) => !page.archived && !page.in_trash)
+        .map((page: any) => ({ id: compactId(page.id), title: pageName(page) || 'Без названия' }))
+        .filter((page: NotionPageChoice) => !page.title.startsWith(PREFIX_THOUGHT) && !page.title.startsWith(PREFIX_PROJECT))
+    return { pages, cursor: data.has_more && typeof data.next_cursor === 'string' ? data.next_cursor as string : undefined }
+}
+
+export async function verifyNotionConnection(pageId = root(), token?: string) {
+    const page = await notion(`/pages/${pageId}`, 'GET', undefined, token)
+    if (page.archived || page.in_trash) throw new Error('Эта страница Notion находится в корзине')
+    return pageName(page) || 'Без названия'
 }
 
 export async function verifyNotionProjectPage(pageId: string) {
@@ -525,10 +546,7 @@ export async function verifyNotionProjectPage(pageId: string) {
     const meta = await parseMeta<{ kind?: string }>(await getPageBlocks(pageId))
     if (meta?.kind === 'thought' || meta?.kind === 'project')
         throw new Error('Выбери существующую страницу вне служебных страниц Thoughts')
-    const titleProperty = Object.values(page.properties ?? {}).find(
-        (property: any) => property.type === 'title'
-    ) as { title: { plain_text?: string; text?: { content: string } }[] } | undefined
-    return titleProperty?.title.map((part) => part.plain_text ?? part.text?.content ?? '').join('').trim() || null
+    return pageName(page)
 }
 
 /** One reconciliation snapshot per pass avoids blind create retries and N-squared reads. */
@@ -603,13 +621,9 @@ export async function createNotionSyncAdapter(snapshot?: {
                 const page: any = await notion(`/pages/${remote}`)
                 const expected = local.notion[destinationRoot]?.version
                 if (expected) {
-                    const titleProperty = Object.values(page.properties ?? {}).find(
-                        (property: any) => property.type === 'title'
-                    ) as { title: { plain_text?: string; text?: { content: string } }[] } | undefined
-                    const pageName = titleProperty?.title.map((part) => part.plain_text ?? part.text?.content ?? '').join('')
                     const latest = await readThought({
                         id: remote,
-                        child_page: { title: pageName }
+                        child_page: { title: pageName(page) }
                     }, await getPageBlocks(remote))
                     if (latest && notionVersionOf(latest) !== expected && latest.notionVersion !== meta.notionVersion)
                         throw new Error('Страница изменилась в Notion. Сначала получим свежую версию.')

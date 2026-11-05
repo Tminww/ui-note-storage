@@ -145,6 +145,11 @@ export async function retryLocalData() {
     await localRepository.retry()
     await syncLocalData()
 }
+export async function changeNotionConnection(change: () => Promise<void>) {
+    if (flight) await flight
+    await change()
+    void syncLocalData()
+}
 export async function importServerData() {
     const [projects, thoughts] = await Promise.all([serverApi.projects(), serverApi.thoughts()])
     await localRepository.importRemote(projects, thoughts, 'server', 'server')

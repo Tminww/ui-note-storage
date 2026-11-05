@@ -38,6 +38,7 @@ import { notionVersionOf, type LocalThought } from './src/localCore'
 import { registerBackgroundSync } from './src/backgroundSync'
 import { allTypes } from './src/taxonomy'
 import { checklistFromList, checklistItem } from './src/checklist'
+import { NotionPagePicker } from './src/NotionPagePicker'
 import { syncLocalData } from './src/localService'
 
 type Page = 'thoughts' | 'projects' | 'ai' | 'settings'
@@ -130,6 +131,8 @@ function ThoughtsApp() {
     const [undoId, setUndoId] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [projectEditor, setProjectEditor] = useState<Partial<Project> | null>(null)
+    const [pickProjectNotionPage, setPickProjectNotionPage] = useState(false)
+    const [manualProjectNotionPage, setManualProjectNotionPage] = useState(false)
     const savedProject = state.projects.find((project) => project.id === projectEditor?.id)
     const linkedProjectPage = savedProject?.notionPageRoot === getNotionRoot()
         ? savedProject?.notionPageId : null
@@ -692,6 +695,7 @@ function ThoughtsApp() {
                         accessibilityLabel={`Изменить проект ${p.name}`}
                         onPress={() => {
                             setError('')
+                            setManualProjectNotionPage(false)
                             setProjectEditor({
                                 ...p,
                                 notionPageId: p.notionPageRoot === getNotionRoot() ? p.notionPageId : undefined
@@ -835,6 +839,7 @@ function ThoughtsApp() {
                         <Action
                             onPress={() => {
                                 setError('')
+                                setManualProjectNotionPage(false)
                                 setProjectEditor({
                                     name: '',
                                     description: '',
@@ -1012,97 +1017,120 @@ function ThoughtsApp() {
             </Sheet>
             <Sheet
                 visible={projectEditor !== null}
-                title={projectEditor?.id ? 'Изменить проект' : 'Новый проект'}
-                onClose={() => setProjectEditor(null)}
+                title={pickProjectNotionPage ? 'Страница проекта в Notion' : projectEditor?.id ? 'Изменить проект' : 'Новый проект'}
+                onClose={() => {
+                    if (pickProjectNotionPage) setPickProjectNotionPage(false)
+                    else setProjectEditor(null)
+                }}
             >
                 {error ? <Info warning>{error}</Info> : null}
-                <Field
-                    label="Название"
-                    value={projectEditor?.name || ''}
-                    maxLength={80}
-                    onChangeText={(v) => setProjectEditor({ ...projectEditor, name: v })}
-                />
-                <Field
-                    label="Описание для AI"
-                    placeholder="Какие мысли относятся к проекту?"
-                    value={projectEditor?.description || ''}
-                    multiline
-                    maxLength={400}
-                    onChangeText={(v) => setProjectEditor({ ...projectEditor, description: v })}
-                />
-                <Field
-                    label="Страница проекта в Notion"
-                    placeholder="Ссылка или ID страницы"
-                    autoCapitalize="none"
-                    value={projectEditor?.notionPageId ?? ''}
-                    onChangeText={(value) => setProjectEditor({ ...projectEditor, notionPageId: value })}
-                />
-                <Text className="text-sm text-muted-foreground">
-                    Дай интеграции доступ к странице. Пустое поле возвращает заметки в папку проекта
-                    внутри общего хранилища Thoughts.
-                </Text>
-                {linkedProjectPage ? (
-                    <Action secondary onPress={() => void run(() =>
-                        Linking.openURL(`https://www.notion.so/${linkedProjectPage}`)
-                    )}>
-                        Открыть в Notion
-                    </Action>
-                ) : null}
-                <Text className="text-sm font-semibold">Цвет проекта</Text>
-                <Box className="flex-row gap-3">
-                    {accents.map((a) => (
-                        <Pressable
-                            key={a.id}
-                            accessibilityLabel={`Цвет ${a.name}`}
-                            onPress={() =>
-                                setProjectEditor({ ...projectEditor, color: rgb(a.light) })
-                            }
-                            className="h-12 w-12 items-center justify-center rounded-full"
-                            style={{ backgroundColor: rgb(a.light) }}
-                        >
-                            {projectEditor?.color === rgb(a.light) ? (
-                                <Icon name="checkmark" tone="text-primary-foreground" />
+                {pickProjectNotionPage ? (
+                    <NotionPagePicker onSelect={(page) => {
+                        setProjectEditor({ ...projectEditor, notionPageId: page.id, notionPageTitle: page.title })
+                        setPickProjectNotionPage(false)
+                    }} onCancel={() => setPickProjectNotionPage(false)} />
+                ) : <>
+                    <Field
+                        label="Название"
+                        value={projectEditor?.name || ''}
+                        maxLength={80}
+                        onChangeText={(v) => setProjectEditor({ ...projectEditor, name: v })}
+                    />
+                    <Field
+                        label="Описание для AI"
+                        placeholder="Какие мысли относятся к проекту?"
+                        value={projectEditor?.description || ''}
+                        multiline
+                        maxLength={400}
+                        onChangeText={(v) => setProjectEditor({ ...projectEditor, description: v })}
+                    />
+                    {sync.notionConfigured ? (
+                        <Box className="gap-2">
+                            <Text className="text-sm font-semibold">Страница проекта в Notion</Text>
+                            <Text className="text-sm text-muted-foreground">
+                                {projectEditor?.notionPageId ? projectEditor.notionPageTitle || 'Выбрана отдельная страница' : 'Общее хранилище Thoughts'}
+                            </Text>
+                            <Action secondary onPress={() => setPickProjectNotionPage(true)}>Выбрать страницу Notion</Action>
+                            <Pressable accessibilityRole="button" className="min-h-11 justify-center"
+                                onPress={() => setManualProjectNotionPage(!manualProjectNotionPage)}>
+                                <Text className="text-sm text-primary">{manualProjectNotionPage ? 'Скрыть ссылку' : 'Указать ссылку вручную'}</Text>
+                            </Pressable>
+                            {manualProjectNotionPage ? (
+                                <Field label="Ссылка или ID страницы" autoCapitalize="none"
+                                    value={projectEditor?.notionPageId ?? ''}
+                                    onChangeText={(notionPageId) => setProjectEditor({ ...projectEditor, notionPageId, notionPageTitle: null })}
+                                />
                             ) : null}
-                        </Pressable>
-                    ))}
-                </Box>
-                <Action
-                    disabled={!projectEditor?.name?.trim() || busy}
-                    onPress={() =>
-                        void run(async () => {
-                            if (!projectEditor) return
-                            const body = {
-                                name: projectEditor.name || '',
-                                description: projectEditor.description || '',
-                                color: projectEditor.color || rgb(accents[0].light),
-                                notionPageId: projectEditor.notionPageId
-                            }
-                            if (projectEditor.id) await api.updateProject(projectEditor.id, body)
-                            else await api.createProject(body)
-                            setProjectEditor(null)
-                        })
-                    }
-                >
-                    Сохранить проект
-                </Action>
-                {projectEditor?.id ? (
+                            {projectEditor?.notionPageId ? (
+                                <Action secondary onPress={() => setProjectEditor({ ...projectEditor, notionPageId: null, notionPageTitle: null })}>
+                                    Использовать общее хранилище
+                                </Action>
+                            ) : null}
+                        </Box>
+                    ) : null}
+                    {linkedProjectPage ? (
+                        <Action secondary onPress={() => void run(() =>
+                            Linking.openURL(`https://www.notion.so/${linkedProjectPage}`)
+                        )}>
+                            Открыть в Notion
+                        </Action>
+                    ) : null}
+                    <Text className="text-sm font-semibold">Цвет проекта</Text>
+                    <Box className="flex-row gap-3">
+                        {accents.map((a) => (
+                            <Pressable
+                                key={a.id}
+                                accessibilityLabel={`Цвет ${a.name}`}
+                                onPress={() =>
+                                    setProjectEditor({ ...projectEditor, color: rgb(a.light) })
+                                }
+                                className="h-12 w-12 items-center justify-center rounded-full"
+                                style={{ backgroundColor: rgb(a.light) }}
+                            >
+                                {projectEditor?.color === rgb(a.light) ? (
+                                    <Icon name="checkmark" tone="text-primary-foreground" />
+                                ) : null}
+                            </Pressable>
+                        ))}
+                    </Box>
                     <Action
-                        secondary
+                        disabled={!projectEditor?.name?.trim() || busy}
                         onPress={() =>
-                            confirmDelete(
-                                'Удалить проект? Его мысли останутся во входящих.',
-                                () =>
-                                    void run(async () => {
-                                        await api.deleteProject(projectEditor.id!)
-                                        setProjectEditor(null)
-                                        setSelected('all')
-                                    })
-                            )
+                            void run(async () => {
+                                if (!projectEditor) return
+                                const body = {
+                                    name: projectEditor.name || '',
+                                    description: projectEditor.description || '',
+                                    color: projectEditor.color || rgb(accents[0].light),
+                                    notionPageId: projectEditor.notionPageId
+                                }
+                                if (projectEditor.id) await api.updateProject(projectEditor.id, body)
+                                else await api.createProject(body)
+                                setProjectEditor(null)
+                            })
                         }
                     >
-                        Удалить проект
+                        Сохранить проект
                     </Action>
-                ) : null}
+                    {projectEditor?.id ? (
+                        <Action
+                            secondary
+                            onPress={() =>
+                                confirmDelete(
+                                    'Удалить проект? Его мысли останутся во входящих.',
+                                    () =>
+                                        void run(async () => {
+                                            await api.deleteProject(projectEditor.id!)
+                                            setProjectEditor(null)
+                                            setSelected('all')
+                                        })
+                                )
+                            }
+                        >
+                            Удалить проект
+                        </Action>
+                    ) : null}
+                </>}
             </Sheet>
             <Sheet
                 visible={Boolean(savedEditing)}

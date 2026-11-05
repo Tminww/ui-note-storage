@@ -25,6 +25,7 @@ jobs:
         timeout-minutes: 70
         env:
             EXPO_EAS_PROJECT_ID: ${{ vars.EXPO_EAS_PROJECT_ID || '5fd4e492-7922-4f9e-83e4-a6c9e8062dc2' }}
+            EXPO_PUBLIC_NOTION_OAUTH_URL: ${{ vars.NOTION_OAUTH_URL }}
         defaults:
             run:
                 working-directory: thoughts-mvp
