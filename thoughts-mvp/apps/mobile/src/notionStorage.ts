@@ -4,9 +4,11 @@
  *  Metadata lives in a collapsed toggle block. All audio remains on device.
  */
 import type { Project, Thought, AIConfig } from './api'
+import * as Crypto from 'expo-crypto'
 import { getNotionRoot, readSecret } from './deviceConfig'
 import { enrichNote, localSettings, saveLocalSettings } from './onDeviceAI'
 import type { LocalProject, LocalThought, SyncAdapters } from './localCore'
+import { notionVersionOf } from './localCore'
 
 const BASE = 'https://api.notion.com/v1'
 const VERSION = '2025-09-03'
@@ -155,6 +157,12 @@ function metadataToggle(value: string) {
         toggle: { rich_text: rich(META_LABEL), children: [paragraph(value)] }
     }
 }
+function visibleThought(raw: string, summary?: string) {
+    const formatted = summary?.trim()
+        .replace(/^[ \t]*[-*•][ \t]+\[([ xX])\][ \t]+/gm, (_, mark) => mark === ' ' ? '☐ ' : '☑ ')
+        .replace(/^[ \t]*[-*][ \t]+/gm, '• ')
+    return formatted ? `Резюме\n${formatted}\n\nИсходный текст\n${raw}` : raw
+}
 async function createChild(parent: string, name: string, meta: object, raw?: string): Promise<any> {
     // Stable localId is committed with page creation, so a lost response can be reconciled.
     return notion('/pages', 'POST', {
@@ -177,10 +185,7 @@ async function updateMetadata(pageId: string, meta: object, raw?: string, summar
     )
     const nextIds: string[] = []
     if (raw !== undefined) {
-        const formatted = summary?.trim()
-            .replace(/^[ \t]*[-*•][ \t]+\[([ xX])\][ \t]+/gm, (_, mark) => mark === ' ' ? '☐ ' : '☑ ')
-            .replace(/^[ \t]*[-*][ \t]+/gm, '• ')
-        const visible = formatted ? `Резюме\n${formatted}\n\nИсходный текст\n${raw}` : raw
+        const visible = visibleThought(raw, summary)
         const texts = Array.from({ length: Math.ceil(visible.length / 1800) }, (_, i) =>
             visible.slice(i * 1800, (i + 1) * 1800)
         )
@@ -292,6 +297,7 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
         id: b.id,
         localId: meta.localId,
         localRevision: meta.localRevision,
+        notionVersion: meta.notionVersion,
         rawText: meta.rawText || '',
         title: meta.title || title(b).slice(PREFIX_THOUGHT.length),
         summary: meta.summary || '',
@@ -311,21 +317,52 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
         updatedAt: meta.updatedAt || b.last_edited_time || now()
     }
 }
-async function inFolder(id: string, loadBlocks: typeof getPageBlocks, linkedProjectId?: string): Promise<Thought[]> {
+async function readThought(block: any, blocks: any[], linkedProjectId?: string): Promise<Thought | null> {
+    const meta = await parseMeta<Partial<Thought> & { kind?: string; _textBlocks?: string[] }>(blocks)
+    if (linkedProjectId && (meta?.kind !== 'thought' || !meta.localId ||
+        compactId(meta.projectId ?? '') !== compactId(linkedProjectId))) return null
+    const result = thoughtFrom(block, meta || {})
+    if (meta?.kind !== 'thought' || !meta.localId) return result
+
+    const titleOnPage = title(block).replace(/^💭 /, '')
+    const renamed = Boolean(title(block)) &&
+        titleOnPage !== pageTitle(PREFIX_THOUGHT + result.title)[0].text.content.slice(PREFIX_THOUGHT.length)
+    const owned = Array.isArray(meta._textBlocks)
+        ? blocks.filter((item) => meta._textBlocks!.includes(item.id))
+        : []
+    const visible = owned.map(blockText).join('')
+    const edited = owned.length > 0 && visible !== result.rawText && visible !== visibleThought(result.rawText, result.summary)
+    if (!renamed && !edited) return result
+
+    const textHeading = '\n\nИсходный текст\n'
+    const separator = visible.startsWith('Резюме\n') ? visible.indexOf(textHeading) : -1
+    const summary = separator < 0 ? result.summary : visible.slice('Резюме\n'.length, separator)
+        .replace(/^☐ /gm, '- [ ] ').replace(/^☑ /gm, '- [x] ').replace(/^• /gm, '- ')
+    return {
+        ...result,
+        title: renamed ? titleOnPage : result.title,
+        rawText: edited ? separator < 0 ? visible : visible.slice(separator + textHeading.length) : result.rawText,
+        summary: edited ? summary : result.summary,
+        notionVersion: 'notion:' + await Crypto.digestStringAsync(
+            Crypto.CryptoDigestAlgorithm.SHA256, JSON.stringify([notionVersionOf(result), titleOnPage, visible])
+        )
+    }
+}
+async function inFolder(
+    id: string, loadBlocks: typeof getPageBlocks, knownThoughts: ReadonlySet<string>, linkedProjectId?: string
+): Promise<Thought[]> {
     const blocks = await loadBlocks(id)
     const notes = blocks.filter(
-        (b) => b.type === 'child_page' && title(b).startsWith(PREFIX_THOUGHT)
+        (b) => b.type === 'child_page' && (title(b).startsWith(PREFIX_THOUGHT) || knownThoughts.has(compactId(b.id)))
     )
     const results = await Promise.all(notes.map(async (block) => {
-        const meta = await parseMeta<Partial<Thought> & { kind?: string }>(await loadBlocks(block.id))
-        if (linkedProjectId && (meta?.kind !== 'thought' || !meta.localId ||
-            compactId(meta.projectId ?? '') !== compactId(linkedProjectId))) return null
-        return thoughtFrom(block, meta || {})
+        return readThought(block, await loadBlocks(block.id), linkedProjectId)
     }))
     return results.filter((note) => note !== null)
 }
-export async function getNotionSnapshot() {
+export async function getNotionSnapshot(knownThoughtIds: string[] = []) {
     const destinationRoot = root()
+    const knownThoughts = new Set(knownThoughtIds.map(compactId))
     const pending = new Map<string, ReturnType<typeof getPageBlocks>>()
     const loadBlocks = (pageId: string) => {
         const key = compactId(pageId)
@@ -340,11 +377,11 @@ export async function getNotionSnapshot() {
     const linkedErrors = new Map<string, Error>()
     const linked = projects.filter((project) => project.notionPageId)
     const thoughts = (await Promise.all([
-        ...folders.map((id) => inFolder(id, loadBlocks)),
+        ...folders.map((id) => inFolder(id, loadBlocks, knownThoughts)),
         ...linked.map(async (project) => {
             const pageId = project.notionPageId!
             try {
-                return await inFolder(pageId, loadBlocks, project.id)
+                return await inFolder(pageId, loadBlocks, knownThoughts, project.id)
             } catch (error) {
                 const detail = error instanceof Error ? error.message : String(error)
                 linkedErrors.set(compactId(pageId), new Error(`${project.name}: ${detail}`))
@@ -539,6 +576,8 @@ export async function createNotionSyncAdapter(snapshot?: {
                 deleted: _deleted,
                 aiPending: _pending,
                 aiFeedback: _feedback,
+                syncVersion,
+                notionConflicts: _conflicts,
                 attempts: _attempts,
                 retryAt: _retry,
                 ...data
@@ -548,7 +587,8 @@ export async function createNotionSyncAdapter(snapshot?: {
                 kind: 'thought',
                 localId: local.id,
                 projectId: remoteProjectId,
-                localRevision: revision
+                localRevision: revision,
+                notionVersion: syncVersion ?? `${revision}:${local.updatedAt}`
             }
             if (!remote) {
                 const page = await createChild(
@@ -561,6 +601,19 @@ export async function createNotionSyncAdapter(snapshot?: {
                 thoughts.push({ ...local, id: remote!, localId: local.id })
             } else {
                 const page: any = await notion(`/pages/${remote}`)
+                const expected = local.notion[destinationRoot]?.version
+                if (expected) {
+                    const titleProperty = Object.values(page.properties ?? {}).find(
+                        (property: any) => property.type === 'title'
+                    ) as { title: { plain_text?: string; text?: { content: string } }[] } | undefined
+                    const pageName = titleProperty?.title.map((part) => part.plain_text ?? part.text?.content ?? '').join('')
+                    const latest = await readThought({
+                        id: remote,
+                        child_page: { title: pageName }
+                    }, await getPageBlocks(remote))
+                    if (latest && notionVersionOf(latest) !== expected && latest.notionVersion !== meta.notionVersion)
+                        throw new Error('Страница изменилась в Notion. Сначала получим свежую версию.')
+                }
                 if (
                     page.parent?.page_id?.replace(/-/g, '') !==
                     (parent || destinationRoot).replace(/-/g, '')

@@ -10,7 +10,7 @@ export type Preferences = {
     voiceReview: boolean
     haptics: boolean
 }
-export type RemoteLink = { id: string; revision: number }
+export type RemoteLink = { id: string; revision: number; version?: string }
 export type LocalProject = Project & {
     revision: number
     deleted: boolean
@@ -25,9 +25,12 @@ export type LocalThought = Thought & {
     retryAt: number
     notion: Record<string, RemoteLink>
     notionErrors?: Record<string, { revision: number; message: string }>
+    syncVersion?: string
+    notionConflicts?: Record<string, Thought>
 }
 export type AIUsage = { requests?: number; promptTokens?: number; completionTokens?: number; totalTokens?: number; costUsd?: number }
 export type EnrichmentResult = Partial<Thought> & { usage?: AIUsage }
+export const notionVersionOf = (remote: Thought) => remote.notionVersion ?? `${remote.localRevision ?? 0}:${remote.updatedAt}`
 export type AIHistoryEntry = {
     id: string
     thoughtId: string
@@ -177,11 +180,24 @@ export function createLocalRepository(
     const touch = (item: LocalProject | LocalThought) => {
         item.revision++
         item.updatedAt = stamp()
+        if ('rawText' in item) item.syncVersion = id()
     }
     const findNote = (s: LocalState, noteId: string) => {
         const note = s.thoughts.find((t) => t.id === noteId && !t.deleted)
         if (!note) throw new Error('Мысль не найдена')
         return note
+    }
+    const applyRemoteNote = (local: LocalThought, remote: Thought, root: string) => {
+        const { id: _remoteId, ...fields } = remote
+        Object.assign(local, fields)
+        local.revision++
+        local.syncVersion = undefined
+        local.aiPending = remote.status === 'pending'
+        delete local.aiFeedback
+        local.attempts = local.retryAt = 0
+        local.notion[root] = { id: remote.id, revision: local.revision, version: notionVersionOf(remote) }
+        if (local.notionConflicts) delete local.notionConflicts[root]
+        if (local.notionErrors) delete local.notionErrors[root]
     }
     const repository = {
         initialize,
@@ -307,6 +323,7 @@ export function createLocalRepository(
                     revision: 1,
                     deleted: false,
                     aiPending: true,
+                    syncVersion: id(),
                     attempts: 0,
                     retryAt: 0,
                     notion: {}
@@ -451,6 +468,29 @@ export function createLocalRepository(
                     t.attempts = 0
                 })
             }),
+        resolveNotionConflict: (noteId: string, root: string, revision: number, remoteVersion: string, keepBoth: boolean) =>
+            mutate((s) => {
+                const local = findNote(s, noteId)
+                const remote = local.notionConflicts?.[root]
+                if (local.revision !== revision || !remote || notionVersionOf(remote) !== remoteVersion)
+                    throw new Error('Версии изменились. Проверь их ещё раз.')
+                if (keepBoth) {
+                    s.thoughts.push({
+                        ...local,
+                        id: id(),
+                        title: `${local.title.slice(0, 120)} (моя копия)`,
+                        localId: undefined,
+                        localRevision: undefined,
+                        notionVersion: undefined,
+                        notion: {},
+                        notionErrors: undefined,
+                        notionConflicts: undefined,
+                        revision: 1,
+                        syncVersion: id()
+                    })
+                }
+                applyRemoteNote(local, remote, root)
+            }),
         importRemote: (
             projects: Project[],
             thoughts: Thought[],
@@ -487,6 +527,10 @@ export function createLocalRepository(
                         })
                 }
                 for (const remote of thoughts) {
+                    const imported = {
+                        ...remote,
+                        projectId: remote.projectId ? projectIds.get(remote.projectId) || null : null
+                    }
                     const type = remote.categoryDefinition
                     if (type?.id.startsWith('custom:') && !s.customCategories.some((c) => c.id === type.id)) s.customCategories.push(type)
                     const existing = s.thoughts.find(
@@ -495,28 +539,47 @@ export function createLocalRepository(
                             t.notion[root]?.id === remote.id
                     )
                     if (existing) {
-                        if (source === 'notion' && !existing.notion[root])
-                            existing.notion[root] = {
+                        if (source !== 'notion') continue
+                        const version = notionVersionOf(remote)
+                        let link = existing.notion[root]
+                        if (!link) {
+                            link = existing.notion[root] = {
                                 id: remote.id,
-                                revision: remote.localId
-                                    ? (remote.localRevision ?? 0)
-                                    : existing.revision
+                                revision: remote.notionVersion && remote.notionVersion === existing.syncVersion
+                                    ? existing.revision
+                                    : remote.localId ? (remote.localRevision ?? 0) : existing.revision,
+                                version
                             }
+                        }
+                        if (existing.deleted) continue
+                        if (link.version === version) {
+                            if (existing.notionConflicts) delete existing.notionConflicts[root]
+                            continue
+                        }
+                        if (remote.notionVersion && remote.notionVersion === existing.syncVersion) {
+                            existing.notion[root] = { id: remote.id, revision: existing.revision, version }
+                            if (existing.notionConflicts) delete existing.notionConflicts[root]
+                        } else if (!link.version && !remote.notionVersion && remote.localRevision === link.revision &&
+                            (link.revision !== existing.revision || remote.updatedAt === existing.updatedAt)) {
+                            link.version = version
+                        } else if (link.revision === existing.revision && !existing.aiFeedback) {
+                            applyRemoteNote(existing, imported, root)
+                        } else {
+                            existing.notionConflicts ??= {}
+                            existing.notionConflicts[root] = imported
+                        }
                         continue
                     }
                     s.thoughts.push({
-                        ...remote,
+                        ...imported,
                         id: remote.localId || remote.id,
-                        projectId: remote.projectId
-                            ? projectIds.get(remote.projectId) || null
-                            : null,
                         revision: 1,
                         deleted: false,
                         aiPending: remote.status === 'pending',
                         attempts: 0,
                         retryAt: 0,
                         notion:
-                            source === 'notion' ? { [root]: { id: remote.id, revision: 1 } } : {}
+                            source === 'notion' ? { [root]: { id: remote.id, revision: 1, version: notionVersionOf(remote) } } : {}
                     })
                 }
             }),
@@ -555,6 +618,7 @@ export function createLocalRepository(
                     let current = state.thoughts.find((t) => t.id === entry.id)!
                     if (
                         !current.deleted &&
+                        !(destination && current.notionConflicts?.[destination.root]) &&
                         current.aiPending &&
                         current.retryAt <= now() &&
                         adapters.enrich
@@ -640,6 +704,7 @@ export function createLocalRepository(
                     }
                     current = state.thoughts.find((t) => t.id === entry.id)!
                     if (!destination) continue
+                    if (current.notionConflicts?.[destination.root]) continue
                     const link = current.notion[destination.root]
                     const revision = current.revision
                     try {
@@ -679,7 +744,8 @@ export function createLocalRepository(
                             const t = s.thoughts.find((t) => t.id === captured.id)!
                             t.notion[destination.root] = {
                                 id: remoteId,
-                                revision: captured.revision
+                                revision: captured.revision,
+                                version: captured.syncVersion ?? `${captured.revision}:${captured.updatedAt}`
                             }
                             if (t.notionErrors) delete t.notionErrors[destination.root]
                         })

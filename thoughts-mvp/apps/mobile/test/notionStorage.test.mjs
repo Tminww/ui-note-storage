@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
+import { createHash } from 'node:crypto'
+import { notionVersionOf } from '../src/localCore.ts'
 
 const prefix = 'THOUGHTS_V1:'
 const paragraph = (id, text) => ({
@@ -113,13 +115,15 @@ async function fixture() {
         enrichNote: async () => ({}),
         localSettings: async () => ({}),
         saveLocalSettings: async () => ({}),
+        notionVersionOf,
+        Crypto: { CryptoDigestAlgorithm: { SHA256: 'sha256' }, digestStringAsync: async (algorithm, data) => createHash(algorithm).update(data).digest('hex') },
         request
     }
     const source = stripTypeScriptTypes(
         readFileSync(new URL('../src/notionStorage.ts', import.meta.url), 'utf8')
     ).replace(/^import .*$/gm, '')
     const stub =
-        'const {getNotionRoot,readSecret,enrichNote,localSettings,saveLocalSettings,request}=globalThis.__notionFixture;const fetch=request;'
+        'const {getNotionRoot,readSecret,enrichNote,localSettings,saveLocalSettings,request,notionVersionOf,Crypto}=globalThis.__notionFixture;const fetch=request;'
     const api = await import(
         `data:text/javascript;base64,${Buffer.from(stub + source + `\n// ${Math.random()}`).toString('base64')}`
     )
@@ -248,4 +252,28 @@ test('an inaccessible linked page blocks only writes to that page', async () => 
     const note = { id: 'local-note', title: 'Ритм', rawText: 'Тренировка', revision: 1, notion: {} }
     await assert.rejects(sync.thought(note, target, undefined, 'p'), /Access denied/)
     assert.ok(await sync.thought(note, null))
+})
+
+test('edits in the managed Notion text are imported and stale writes are refused', async () => {
+    const f = await fixture()
+    const adapter = await f.api.createNotionSyncAdapter()
+    const note = {
+        id: 'local-note', title: 'Задачи', rawText: 'Позвонить', summary: '- [ ] Позвонить',
+        updatedAt: '2026-01-01T00:00:00.000Z', revision: 1, syncVersion: 'v1', notion: {}
+    }
+    const pageId = await adapter.thought(note, null)
+    const page = f.pages.get(pageId)
+    const managed = page.blocks.find((block) => block.type === 'paragraph')
+    managed.paragraph.rich_text[0].text.content = 'Резюме\n☑ Позвонить\n\nИсходный текст\nПозвонил'
+    page.name = 'Звонок завершён'
+    const remote = (await f.api.getNotionSnapshot([pageId])).thoughts[0]
+    assert.equal(remote.title, 'Звонок завершён')
+    assert.equal(remote.rawText, 'Позвонил')
+    assert.equal(remote.summary, '- [x] Позвонить')
+    assert.match(remote.notionVersion, /^notion:/)
+    await assert.rejects(adapter.thought({
+        ...note, rawText: 'Моя версия', revision: 2, syncVersion: 'v2',
+        notion: { root: { id: pageId, revision: 1, version: 'v1' } }
+    }, null, pageId), /Страница изменилась/)
+    assert.match(managed.paragraph.rich_text[0].text.content, /Позвонил/)
 })
