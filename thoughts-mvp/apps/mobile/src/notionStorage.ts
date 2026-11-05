@@ -92,12 +92,12 @@ function root() {
 function title(block: any): string {
     return block?.child_page?.title || (block?.type === 'toggle' ? blockText(block) : '')
 }
-async function children(id: string): Promise<any[]> {
+async function children(id: string, token?: string): Promise<any[]> {
     let cursor: string | undefined
     const result: any[] = []
     do {
         const url = `/blocks/${id}/children?page_size=100${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`
-        const chunk: any = await notion(url)
+        const chunk: any = await notion(url, 'GET', undefined, token)
         result.push(...chunk.results)
         cursor = chunk.has_more ? chunk.next_cursor : undefined
     } while (cursor)
@@ -535,6 +535,18 @@ export async function searchNotionPages(query: string, cursor?: string, token?: 
         .map((page: any) => ({ id: compactId(page.id), title: pageName(page) || 'Без названия' }))
         .filter((page: NotionPageChoice) => !page.title.startsWith(PREFIX_THOUGHT) && !page.title.startsWith(PREFIX_PROJECT))
     return { pages, cursor: data.has_more && typeof data.next_cursor === 'string' ? data.next_cursor as string : undefined }
+}
+
+/** Reuse an existing Thoughts child so retrying after a lost response is safe. */
+export async function createNotionInbox(parentId: string, token?: string): Promise<NotionPageChoice> {
+    const existing = (await children(parentId, token)).find((b) =>
+        b.type === 'child_page' && title(b) === 'Thoughts' && !b.archived && !b.in_trash)
+    if (existing) return { id: compactId(existing.id), title: 'Thoughts' }
+    const page = await notion('/pages', 'POST', {
+        parent: { type: 'page_id', page_id: parentId },
+        properties: { title: { type: 'title', title: pageTitle('Thoughts') } }
+    }, token)
+    return { id: compactId(page.id), title: 'Thoughts' }
 }
 
 export async function verifyNotionConnection(pageId = root(), token?: string) {
