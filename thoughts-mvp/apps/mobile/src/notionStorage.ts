@@ -175,13 +175,16 @@ async function createChild(parent: string, name: string, meta: object, raw?: str
         ]
     })
 }
+function ownedTextBlocks(blocks: any[], meta: { _textBlocks?: string[]; _initialTextBlocks?: number }) {
+    if (Array.isArray(meta._textBlocks)) return blocks.filter((b) => meta._textBlocks!.includes(b.id))
+    // Creation commits content and metadata together before child IDs are available.
+    return blocks.filter((b) => b.type === 'paragraph').slice(0, meta._initialTextBlocks || 0)
+}
 async function updateMetadata(pageId: string, meta: object, raw?: string, summary?: string) {
     const blocks = await getPageBlocks(pageId)
     const { current, legacy } = await readMetadata(blocks)
     const previous = (current || legacy)?.value || {}
-    const owned: string[] = (previous._textBlocks || []).filter((id: string) =>
-        blocks.some((b) => b.id === id)
-    )
+    const owned: string[] = ownedTextBlocks(blocks, previous).map((b) => b.id)
     const nextIds: string[] = []
     if (raw !== undefined) {
         const visible = visibleThought(raw, summary)
@@ -320,7 +323,7 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
     }
 }
 async function readThought(block: any, blocks: any[], linkedProjectId?: string): Promise<Thought | null> {
-    const meta = await parseMeta<Partial<Thought> & { kind?: string; _textBlocks?: string[] }>(blocks)
+    const meta = await parseMeta<Partial<Thought> & { kind?: string; _textBlocks?: string[]; _initialTextBlocks?: number }>(blocks)
     if (block.type === 'toggle' && (meta?.kind !== 'thought' || !meta.localId)) return null
     if (linkedProjectId && (meta?.kind !== 'thought' || !meta.localId ||
         compactId(meta.projectId ?? '') !== compactId(linkedProjectId))) return null
@@ -330,9 +333,7 @@ async function readThought(block: any, blocks: any[], linkedProjectId?: string):
     const titleOnPage = title(block).replace(/^💭 /, '')
     const renamed = Boolean(title(block)) &&
         titleOnPage !== (block.type === 'toggle' ? result.title.slice(0, 90) : pageTitle(PREFIX_THOUGHT + result.title)[0].text.content.slice(PREFIX_THOUGHT.length))
-    const owned = Array.isArray(meta._textBlocks)
-        ? blocks.filter((item) => meta._textBlocks!.includes(item.id))
-        : []
+    const owned = ownedTextBlocks(blocks, meta)
     const visible = owned.map(blockText).join('')
     const edited = owned.length > 0 && visible !== result.rawText && visible !== visibleThought(result.rawText, result.summary)
     if (!renamed && !edited) return result
@@ -650,7 +651,7 @@ export async function createNotionSyncAdapter(snapshot?: {
                     } else {
                         const blocks = await getPageBlocks(remote)
                         const metadata = await readMetadata(blocks)
-                        const owned = (metadata.current || metadata.legacy)?.value._textBlocks || []
+                        const owned = ownedTextBlocks(blocks, (metadata.current || metadata.legacy)?.value || {}).map((b) => b.id)
                         if (blocks.some((b) => !owned.includes(b.id) &&
                             !(b.type === 'toggle' && blockText(b) === META_LABEL)))
                             throw new Error('В заметке есть дополнительные блоки Notion. Перенеси её в нужную страницу в Notion, чтобы сохранить их.')
@@ -661,11 +662,14 @@ export async function createNotionSyncAdapter(snapshot?: {
                 }
             }
             if (!remote) {
+                const visible = visibleThought(local.rawText, local.summary)
+                const content = Array.from({ length: Math.ceil(visible.length / 1800) }, (_, i) =>
+                    paragraph(visible.slice(i * 1800, (i + 1) * 1800)))
                 const created = await notion(`/blocks/${target}/children`, 'PATCH', {
                     children: [{ object: 'block', type: 'toggle', toggle: {
                         rich_text: rich(PREFIX_THOUGHT + local.title.slice(0, 90)),
-                        children: [metadataToggle(META_PREFIX + JSON.stringify({
-                            ...meta, rawText: local.rawText, notionReplacesId: replaced
+                        children: [...content, metadataToggle(META_PREFIX + JSON.stringify({
+                            ...meta, rawText: local.rawText, notionReplacesId: replaced, _initialTextBlocks: content.length
                         }))]
                     } }]
                 })

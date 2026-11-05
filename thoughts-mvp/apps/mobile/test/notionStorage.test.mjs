@@ -316,6 +316,11 @@ test('a lost toggle append is reconciled, updated and removed without duplicate 
     const first = await f.api.createNotionSyncAdapter()
     f.loseNextCreate()
     await assert.rejects(first.thought(note, null), /Response lost/)
+    const committed = (await f.api.getNotionSnapshot()).thoughts[0]
+    assert.equal(committed.rawText, 'Полный текст')
+    const textBlocks = f.nested.get(committed.id).filter((b) => b.type === 'paragraph')
+    assert.equal(textBlocks.length, 1)
+    assert.equal(textBlocks[0].paragraph.rich_text[0].text.content, 'Полный текст')
     const second = await f.api.createNotionSyncAdapter()
     const remote = await second.thought(note, null)
     assert.equal(remote.parentId, 'root')
