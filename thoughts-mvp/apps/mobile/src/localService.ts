@@ -3,7 +3,7 @@ import NetInfo from '@react-native-community/netinfo'
 import * as Crypto from 'expo-crypto'
 import { createLocalRepository, type SyncAdapters, type EnrichmentResult } from './localCore'
 import { localDocument } from './localDocument'
-import { enrichNote, localSettings, saveLocalSettings } from './onDeviceAI'
+import { enrichNote, localSettings, reviseNote, saveLocalSettings } from './onDeviceAI'
 import { createNotionSyncAdapter, getNotionSnapshot, parseNotionProjectPage, verifyNotionProjectPage } from './notionStorage'
 import { getNotionRoot, hasSecret } from './deviceConfig'
 import { getApiUrl, request, serverApi, type AIConfig } from './api'
@@ -59,6 +59,17 @@ export function syncLocalData() {
             const settings = await localSettings()
             adapters.aiModels = { provider: hasAI ? 'openrouter' : 'server', generatorModel: settings.generatorModel, decisionModel: settings.decisionProvider === 'disabled' ? 'disabled' : settings.decisionModel }
             adapters.enrich = async (thought, projects) => {
+                if (thought.aiFeedback) {
+                    const { rawText, title, summary, tags } = thought
+                    const revision = { instruction: thought.aiFeedback, title, summary, tags }
+                    const result = hasAI
+                        ? await reviseNote(rawText, settings, revision)
+                        : await request<EnrichmentResult>('/enrich/revise', {
+                            method: 'POST',
+                            body: JSON.stringify({ rawText, ...revision, settings })
+                        })
+                    return { ...result, status: thought.status === 'ready' ? 'ready' : 'needs_review' }
+                }
                 if (hasAI)
                     return enrichNote(
                         thought.rawText,

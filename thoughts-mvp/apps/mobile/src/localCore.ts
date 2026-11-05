@@ -19,6 +19,7 @@ export type LocalThought = Thought & {
     revision: number
     deleted: boolean
     aiPending: boolean
+    aiFeedback?: string
     attempts: number
     retryAt: number
     notion: Record<string, RemoteLink>
@@ -61,7 +62,7 @@ export class LocalConflictError extends Error {
     readonly code = 'LOCAL_CONFLICT'
 }
 export type SyncAdapters = {
-    enrich?: (thought: Thought, projects: Project[]) => Promise<EnrichmentResult>
+    enrich?: (thought: LocalThought, projects: Project[]) => Promise<EnrichmentResult>
     aiModels?: { provider: string; generatorModel: string; decisionModel: string }
     notion?: {
         root: string
@@ -334,12 +335,14 @@ export function createLocalRepository(
                     t.projectLocked = Boolean(body.projectId)
                 }
                 if (changedText) {
+                    delete t.aiFeedback
                     t.classificationProposal = null
                     t.aiPending = true
                     t.status = 'pending'
                     t.attempts = 0
                     t.retryAt = 0
                 } else if (body.status === 'ready') {
+                    delete t.aiFeedback
                     t.classificationProposal = null
                     t.aiPending = false
                     t.errorMessage = null
@@ -380,7 +383,7 @@ export function createLocalRepository(
                 }
                 t.classificationProposal = null
                 t.status = t.projectId && !(pending.unresolved?.category && !pending.category) ? 'ready' : 'needs_review'
-                t.aiPending = false
+                t.aiPending = Boolean(t.aiFeedback)
                 t.errorMessage = null
                 t.attempts = t.retryAt = 0
                 touch(t)
@@ -390,7 +393,7 @@ export function createLocalRepository(
             const t = findNote(s, noteId)
             if (t.revision !== revision) throw new Error('Мысль изменилась. Открой её ещё раз.')
             t.classificationProposal = null
-            t.aiPending = false
+            t.aiPending = Boolean(t.aiFeedback)
             t.status = 'needs_review'
             touch(t)
         }),
@@ -401,15 +404,23 @@ export function createLocalRepository(
                 touch(t)
                 return { ok: true }
             }),
-        processThought: (noteId: string) =>
+        processThought: (noteId: string, feedback?: string) =>
             mutate((s) => {
                 const t = findNote(s, noteId)
+                if (feedback !== undefined) {
+                    const instruction = feedback.trim()
+                    if (!instruction || instruction.length > 1000)
+                        throw new Error('Опиши правку в 1–1000 символах')
+                    t.aiFeedback = instruction
+                } else {
+                    delete t.aiFeedback
+                    t.classificationProposal = null
+                    t.status = 'pending'
+                }
                 t.aiPending = true
                 t.attempts = 0
                 t.retryAt = 0
                 t.errorMessage = null
-                t.classificationProposal = null
-                t.status = 'pending'
                 touch(t)
                 return t
             }),
@@ -572,7 +583,8 @@ export function createLocalRepository(
                                     if (result[key] !== undefined && !(key === 'category' && t.categoryLocked))
                                         Object.assign(t, { [key]: result[key] })
                                 }
-                                t.classificationProposal = result.classificationProposal ?? null
+                                if (!captured.aiFeedback)
+                                    t.classificationProposal = result.classificationProposal ?? null
                                 t.categoryDefinition = allTypes(s.customCategories).find((c) => c.id === t.category)
                                 if (!t.projectLocked && result.projectId !== undefined)
                                     t.projectId = s.projects.some(
@@ -580,8 +592,9 @@ export function createLocalRepository(
                                     )
                                         ? result.projectId
                                         : null
-                                t.aiPending = !t.classificationProposal &&
+                                t.aiPending = (Boolean(captured.aiFeedback) || !t.classificationProposal) &&
                                     (Boolean(result.errorMessage) || result.status === 'pending')
+                                if (!t.aiPending) delete t.aiFeedback
                                 t.attempts = t.aiPending ? t.attempts + 1 : 0
                                 t.retryAt = t.aiPending
                                     ? now() + Math.min(300000, 2000 * 2 ** t.attempts)
