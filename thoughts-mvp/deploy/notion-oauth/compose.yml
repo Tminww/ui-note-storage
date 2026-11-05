@@ -7,6 +7,9 @@ services:
     env_file:
       - path: oauth.env
         format: raw
+      - path: proxy.env
+        format: raw
+        required: false
     environment:
       HOST: 0.0.0.0
       PORT: '4010'
