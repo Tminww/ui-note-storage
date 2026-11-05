@@ -51,7 +51,17 @@ async function fixture() {
         const block = path.match(/^\/blocks\/([^/]+)$/)
         const page = path.match(/^\/pages\/([^/]+)$/)
         const move = path.match(/^\/pages\/([^/]+)\/move$/)
-        if (path === '/pages' && method === 'POST') {
+        if (path === '/search' && method === 'POST') {
+            result = {
+                results: [
+                    { id: 'a'.repeat(32), properties: { title: { type: 'title', title: [{ plain_text: 'Работа' }] } } },
+                    { id: 'b'.repeat(32), archived: true },
+                    { id: 'c'.repeat(32), properties: { title: { type: 'title', title: [{ plain_text: '💭 Служебная мысль' }] } } }
+                ],
+                has_more: true,
+                next_cursor: 'next'
+            }
+        } else if (path === '/pages' && method === 'POST') {
             const id = `page-${++sequence}`
             pages.set(id, {
                 id,
@@ -111,6 +121,7 @@ async function fixture() {
     }
     globalThis.__notionFixture = {
         getNotionRoot: () => 'root',
+        getNotionOAuth: () => null,
         readSecret: async () => 'mock-key',
         enrichNote: async () => ({}),
         localSettings: async () => ({}),
@@ -123,7 +134,7 @@ async function fixture() {
         readFileSync(new URL('../src/notionStorage.ts', import.meta.url), 'utf8')
     ).replace(/^import .*$/gm, '')
     const stub =
-        'const {getNotionRoot,readSecret,enrichNote,localSettings,saveLocalSettings,request,notionVersionOf,Crypto}=globalThis.__notionFixture;const fetch=request;'
+        'const {getNotionOAuth,getNotionRoot,readSecret,enrichNote,localSettings,saveLocalSettings,request,notionVersionOf,Crypto}=globalThis.__notionFixture;const fetch=request;'
     const api = await import(
         `data:text/javascript;base64,${Buffer.from(stub + source + `\n// ${Math.random()}`).toString('base64')}`
     )
@@ -165,6 +176,16 @@ test('one Notion snapshot lists root and project blocks only once', async () => 
     assert.equal(snapshot.projects[0].name, 'Работа')
     assert.equal(f.calls.filter((call) => call.path === '/blocks/root/children').length, 1)
     assert.equal(f.calls.filter((call) => call.path === '/blocks/p/children').length, 1)
+})
+test('Notion page picker searches by title, with pagination and no managed or archived entries', async () => {
+    const f = await fixture()
+    assert.deepEqual(await f.api.searchNotionPages('  Работа  ', 'cursor', 'candidate-token'), {
+        pages: [{ id: 'a'.repeat(32), title: 'Работа' }],
+        cursor: 'next'
+    })
+    assert.deepEqual(f.calls[0].body, {
+        query: 'Работа', start_cursor: 'cursor', page_size: 25, filter: { property: 'object', value: 'page' }
+    })
 })
 test('updating thought text changes only recorded owned blocks', async () => {
     const f = await fixture()
