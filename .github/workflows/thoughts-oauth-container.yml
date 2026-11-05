@@ -1,0 +1,83 @@
+name: Build Thoughts OAuth container
+on:
+    push:
+        branches: [develop, main]
+        paths:
+            - 'thoughts-mvp/apps/api/src/notionOAuth*.mjs'
+            - 'thoughts-mvp/apps/api/src/env.mjs'
+            - 'thoughts-mvp/apps/api/test/notionOAuth.test.mjs'
+            - 'thoughts-mvp/apps/api/Dockerfile.oauth*'
+            - 'thoughts-mvp/deploy/notion-oauth/**'
+            - '.github/scripts/thoughts_oauth_container_smoke.sh'
+            - '.github/workflows/thoughts-oauth-container.yml'
+    pull_request:
+        paths:
+            - 'thoughts-mvp/apps/api/**'
+            - 'thoughts-mvp/deploy/notion-oauth/**'
+            - '.github/scripts/thoughts_oauth_container_smoke.sh'
+            - '.github/workflows/thoughts-oauth-container.yml'
+    workflow_dispatch:
+permissions:
+    contents: read
+concurrency:
+    group: thoughts-oauth-container-${{ github.ref }}
+    cancel-in-progress: true
+jobs:
+    container:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+              with:
+                  node-version: '22'
+            - name: Test OAuth service
+              run: node --test thoughts-mvp/apps/api/test/notionOAuth.test.mjs
+            - name: Set image name
+              id: image
+              shell: bash
+              run: |
+                  echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/thoughts-notion-oauth" >> "$GITHUB_OUTPUT"
+                  echo "tag=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+            - name: Build runtime image
+              uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+              with:
+                  context: thoughts-mvp/apps/api
+                  file: thoughts-mvp/apps/api/Dockerfile.oauth
+                  load: true
+                  tags: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+                  labels: |
+                      org.opencontainers.image.source=https://github.com/${{ github.repository }}
+                      org.opencontainers.image.revision=${{ github.sha }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+            - name: Test container startup and shutdown
+              env:
+                  OAUTH_IMAGE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+              run: bash .github/scripts/thoughts_oauth_container_smoke.sh "$OAUTH_IMAGE"
+            - name: Log in to GHCR
+              if: github.event_name != 'pull_request'
+              uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+            - name: Publish tested image
+              if: github.event_name != 'pull_request'
+              env:
+                  IMAGE_NAME: ${{ steps.image.outputs.name }}
+                  IMAGE_TAG: ${{ steps.image.outputs.tag }}
+              shell: bash
+              run: |
+                  docker push "$IMAGE_NAME:$IMAGE_TAG"
+                  if [ "$GITHUB_REF" = refs/heads/main ]; then
+                      docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:latest"
+                      docker push "$IMAGE_NAME:latest"
+                  elif [ "$GITHUB_REF" = refs/heads/develop ]; then
+                      docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:develop"
+                      docker push "$IMAGE_NAME:develop"
+                  fi
+                  echo "Published \`$IMAGE_NAME:$IMAGE_TAG\`" >> "$GITHUB_STEP_SUMMARY"

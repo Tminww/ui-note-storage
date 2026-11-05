@@ -94,6 +94,8 @@ export function createNotionOAuthServer({ clientId, clientSecret, redirectUri, f
         }
         try {
             const url = new URL(req.url, callback.origin)
+            if (req.method === 'GET' && url.pathname === '/health')
+                return json(200, { ok: true })
             if (req.method === 'POST' && url.pathname === '/notion/oauth/start') {
                 const { challenge } = await readJson(req)
                 if (typeof challenge !== 'string' || !hexDigest.test(challenge))
