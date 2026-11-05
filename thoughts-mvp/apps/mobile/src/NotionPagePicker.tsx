@@ -4,12 +4,14 @@ import { Action, Field, Icon, Info } from '../components/ui/app-controls'
 import { Box, Text } from '../components/ui/surfaces'
 import { searchNotionPages, type NotionPageChoice } from './notionStorage'
 
-export function NotionPagePicker({ token, disabled, onSelect, onCancel }: {
+export function NotionPagePicker({ token, disabled, onSelect, onCreate, onCancel }: {
     token?: string
     disabled?: boolean
     onSelect: (page: NotionPageChoice) => void
+    onCreate?: (parent: NotionPageChoice) => void
     onCancel: () => void
 }) {
+    const [createMode, setCreateMode] = useState(false)
     const [query, setQuery] = useState('')
     const [pages, setPages] = useState<NotionPageChoice[]>([])
     const [cursor, setCursor] = useState<string>()
@@ -47,6 +49,14 @@ export function NotionPagePicker({ token, disabled, onSelect, onCancel }: {
 
     return (
         <Box className="gap-2">
+            {onCreate ? <>
+                <Action secondary disabled={disabled} onPress={() => setCreateMode(!createMode)}>
+                    {createMode ? 'Выбрать готовую страницу' : 'Создать страницу Thoughts'}
+                </Action>
+                <Text className="text-sm text-muted-foreground">
+                    {createMode ? 'Выбери, внутри какой страницы создать Thoughts. Все мысли будут сохраняться туда.' : 'Выбери страницу для мыслей или создай отдельную Thoughts.'}
+                </Text>
+            </> : null}
             <Field label="Найти страницу" placeholder="Название страницы" value={query} maxLength={100}
                 editable={!disabled} onChangeText={(text) => {
                     if (text === query) return
@@ -74,7 +84,7 @@ export function NotionPagePicker({ token, disabled, onSelect, onCancel }: {
             ) : null}
             {pages.map((page) => (
                 <Pressable key={page.id} accessibilityRole="button" disabled={disabled}
-                    onPress={() => onSelect(page)} className="min-h-12 flex-row items-center gap-3 border-b border-border px-2">
+                    onPress={() => createMode && onCreate ? onCreate(page) : onSelect(page)} className="min-h-12 flex-row items-center gap-3 border-b border-border px-2">
                     <Icon name="document-outline" size={18} />
                     <Text className="flex-1 py-2">{page.title}</Text>
                 </Pressable>
