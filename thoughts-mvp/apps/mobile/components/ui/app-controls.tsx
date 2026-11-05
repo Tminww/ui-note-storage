@@ -125,17 +125,19 @@ export function Sheet({
     visible,
     onClose,
     children,
-    title
+    title,
+    headerActions
 }: {
     visible: boolean
     onClose: () => void
     children: React.ReactNode
     title: string
+    headerActions?: React.ReactNode
 }) {
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                behavior={Platform.OS === 'web' ? undefined : 'padding'}
                 className="flex-1 justify-end bg-foreground/30"
             >
                 <Pressable
@@ -144,20 +146,22 @@ export function Sheet({
                     onPress={onClose}
                 />
                 <SafeAreaView edges={['bottom']} className="max-h-full rounded-t-3xl bg-card">
+                    <Box className="flex-row items-center px-6 pt-3">
+                        <Heading className="flex-1">{title}</Heading>
+                        {headerActions}
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Закрыть"
+                            onPress={onClose}
+                            className="h-12 w-12 items-center justify-center"
+                        >
+                            <Icon name="close" />
+                        </Pressable>
+                    </Box>
                     <ScrollView
                         keyboardShouldPersistTaps="handled"
-                        contentContainerClassName="gap-5 p-6"
+                        contentContainerClassName="gap-5 px-6 pb-6 pt-2"
                     >
-                        <Box className="flex-row items-center justify-between">
-                            <Heading>{title}</Heading>
-                            <Pressable
-                                accessibilityLabel="Закрыть"
-                                onPress={onClose}
-                                className="h-12 w-12 items-center justify-center"
-                            >
-                                <Icon name="close" />
-                            </Pressable>
-                        </Box>
                         {children}
                     </ScrollView>
                 </SafeAreaView>
