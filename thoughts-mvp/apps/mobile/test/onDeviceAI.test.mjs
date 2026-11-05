@@ -132,3 +132,16 @@ test('invalid category requests a new type while retaining the confident existin
     assert.equal(result.projectId, 'project'); assert.equal(result.classificationProposal.project, undefined)
     assert.equal(result.classificationProposal.category.name, 'Покупка')
 })
+
+test('feedback sends the original and previous output in one generation call', async () => {
+    const calls = []
+    const m = await ai(0, 0, undefined, { calls })
+    await m.reviseNote('Купить чай', settings, {
+        instruction: 'Сделай список', title: 'Покупки', summary: 'Купить чай', tags: ['дом']
+    })
+    assert.equal(calls.length, 1)
+    assert.deepEqual(JSON.parse(calls[0].body.messages[1].content), {
+        note: 'Купить чай', instruction: 'Сделай список',
+        previous: { title: 'Покупки', summary: 'Купить чай', tags: ['дом'] }
+    })
+})

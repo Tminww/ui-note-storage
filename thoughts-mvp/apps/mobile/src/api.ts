@@ -119,4 +119,4 @@ export const serverApi = {
 }
 
 // Screens always read and write locally. Network work is performed by the durable queue.
-export const api: typeof serverApi = localApi
+export const api = localApi satisfies typeof serverApi

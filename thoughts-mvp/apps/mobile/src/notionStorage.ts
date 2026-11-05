@@ -168,7 +168,7 @@ async function createChild(parent: string, name: string, meta: object, raw?: str
         ]
     })
 }
-async function updateMetadata(pageId: string, meta: object, raw?: string) {
+async function updateMetadata(pageId: string, meta: object, raw?: string, summary?: string) {
     const blocks = await getPageBlocks(pageId)
     const { current, legacy } = await readMetadata(blocks)
     const previous = (current || legacy)?.value || {}
@@ -177,8 +177,10 @@ async function updateMetadata(pageId: string, meta: object, raw?: string) {
     )
     const nextIds: string[] = []
     if (raw !== undefined) {
-        const texts = Array.from({ length: Math.ceil(raw.length / 1800) }, (_, i) =>
-            raw.slice(i * 1800, (i + 1) * 1800)
+        const formatted = summary?.trim().replace(/^[ \t]*[-*][ \t]+/gm, '• ')
+        const visible = formatted ? `Резюме\n${formatted}\n\nИсходный текст\n${raw}` : raw
+        const texts = Array.from({ length: Math.ceil(visible.length / 1800) }, (_, i) =>
+            visible.slice(i * 1800, (i + 1) * 1800)
         )
         for (let i = 0; i < texts.length; i++) {
             if (owned[i]) {
@@ -358,7 +360,7 @@ export async function getThoughts(): Promise<Thought[]> {
 async function putThought(t: Thought) {
     const { id, rawText, ...meta } = t
     await renamePage(id, PREFIX_THOUGHT + t.title)
-    await updateMetadata(id, { kind: 'thought', ...meta }, t.rawText)
+    await updateMetadata(id, { kind: 'thought', ...meta }, t.rawText, t.summary)
     return t
 }
 export async function createThought(rawText: string, projectId: string | null): Promise<Thought> {
@@ -534,6 +536,7 @@ export async function createNotionSyncAdapter(snapshot?: {
                 revision,
                 deleted: _deleted,
                 aiPending: _pending,
+                aiFeedback: _feedback,
                 attempts: _attempts,
                 retryAt: _retry,
                 ...data
@@ -565,7 +568,7 @@ export async function createNotionSyncAdapter(snapshot?: {
                     })
             }
             await renamePage(remote!, PREFIX_THOUGHT + local.title)
-            await updateMetadata(remote!, meta, local.rawText)
+            await updateMetadata(remote!, meta, local.rawText, local.summary)
             return remote!
         },
         remove: async (id: string) => {

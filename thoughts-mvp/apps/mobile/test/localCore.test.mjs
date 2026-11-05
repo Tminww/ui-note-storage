@@ -407,3 +407,31 @@ test('foreground and background writers rebase after a database conflict', async
         'Foreground'
     ])
 })
+
+test('revision instructions survive restart and a failed attempt without replacing the original', async () => {
+    const f = fixture()
+    const first = f.open()
+    const note = await first.createThought('Купить чай и кофе', null)
+    await first.updateThought(note.id, { summary: 'Покупки', category: 'task', status: 'ready' })
+    await first.processThought(note.id, ' Сделай список ')
+    const restarted = f.open()
+    await restarted.flush({ enrich: async (captured) => {
+        assert.equal(captured.aiFeedback, 'Сделай список')
+        assert.equal(captured.summary, 'Покупки')
+        throw new Error('Offline')
+    } })
+    assert.equal(restarted.snapshot().thoughts[0].summary, 'Покупки')
+    assert.equal(restarted.snapshot().thoughts[0].aiPending, true)
+    f.tick()
+    await restarted.flush({ enrich: async (captured) => {
+        assert.equal(captured.aiFeedback, 'Сделай список')
+        return { summary: '- Чай\n- Кофе', errorMessage: null }
+    } })
+    const saved = restarted.snapshot().thoughts[0]
+    assert.equal(saved.summary, '- Чай\n- Кофе')
+    assert.equal(saved.rawText, note.rawText)
+    assert.equal(saved.category, 'task')
+    assert.equal(saved.status, 'ready')
+    assert.equal(saved.aiFeedback, undefined)
+    assert.equal(saved.aiPending, false)
+})
