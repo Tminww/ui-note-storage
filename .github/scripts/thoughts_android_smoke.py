@@ -210,6 +210,10 @@ try:
     tap("Открыть мысль:", contains=True)
     tap("Действия с мыслью")
     tap("Скопировать текст")
+    tap("Закрыть")
+    # Dismiss the system clipboard overlay before opening the notification center.
+    time.sleep(2)
+    tap("Уведомления,", contains=True)
     find("Текст скопирован")
     capture("15-copy-text")
     print("PASS: native layout, all tabs, project creation, note edit, offline save/relaunch, settings and themes; voice transcription, pause/resume, stop/reset and cancel through a CI-only Android speech service")

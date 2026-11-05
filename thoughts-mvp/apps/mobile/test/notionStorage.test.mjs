@@ -69,7 +69,7 @@ async function fixture() {
                 id,
                 name: body.properties.title.title[0].text.content,
                 parent: body.parent.page_id,
-                blocks: insertBlocks(body.children)
+                blocks: insertBlocks(body.children || [])
             })
             if (loseCreate) {
                 loseCreate = false
@@ -343,4 +343,14 @@ test('toggle relocation reconciles a lost response and preserves additional user
     f.nested.get(moved.id).push(paragraph('personal', 'Мои дополнения'))
     await assert.rejects(second.thought(note, null, moved.id), /дополнительные блоки/)
     assert.ok(f.nested.get(moved.id).some((b) => b.id === 'personal'))
+})
+
+
+test('dedicated Thoughts page creation reuses a committed page after a lost acknowledgement', async () => {
+    const f = await fixture()
+    f.loseNextCreate()
+    await assert.rejects(f.api.createNotionInbox('root', 'candidate-token'), /Response lost/)
+    const page = await f.api.createNotionInbox('root', 'candidate-token')
+    assert.equal(page.title, 'Thoughts')
+    assert.equal(f.calls.filter((c) => c.path === '/pages' && c.method === 'POST').length, 1)
 })
