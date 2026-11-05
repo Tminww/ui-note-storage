@@ -38,9 +38,11 @@ Compose использует отдельное имя проекта `thoughts-
 После настройки DNS и сертификата сгенерируй отдельную конфигурацию Nginx из шаблона.
 
 ```bash
-export THOUGHTS_OAUTH_DOMAIN=thoughts-auth.shafranov.tech
+export THOUGHTS_OAUTH_DOMAIN=notion-auth.shafranov.tech
 envsubst '${THOUGHTS_OAUTH_DOMAIN}' < nginx.conf.template > /tmp/thoughts-notion-oauth.conf
 ```
+
+Для HTTP-проверки сертификата создай каталог `/var/www/thoughts-notion-oauth-acme/.well-known/acme-challenge` и используй его webroot в Certbot. Шаблон сохраняет этот путь доступным для продления сертификата. После продления сертификата настрой reload Nginx через deploy hook Certbot.
 
 Шаблон ожидает сертификат в `/etc/letsencrypt/live/<домен>/`. Проверь, что он уже выпущен. Установи сгенерированный файл как отдельный сайт Nginx, выполни `nginx -t`, затем reload. OAuth-пути логируются без query string и тел запросов.
 

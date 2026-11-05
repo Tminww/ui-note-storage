@@ -5,7 +5,12 @@ log_format thoughts_oauth '$remote_addr $request_method $uri $status';
 server {
     listen 80;
     server_name ${THOUGHTS_OAUTH_DOMAIN};
-    return 301 https://$host$request_uri;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/thoughts-notion-oauth-acme;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {
