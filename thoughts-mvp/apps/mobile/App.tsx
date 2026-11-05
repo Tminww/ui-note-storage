@@ -86,6 +86,7 @@ function ThoughtsApp() {
     const [selected, setSelected] = useState('all')
     const [draftProject, setDraftProject] = useState<string | null>(null)
     const [picker, setPicker] = useState(false)
+    const [reviewPicker, setReviewPicker] = useState<LocalThought | null>(null)
     const [showSearch, setShowSearch] = useState(false)
     const [search, setSearch] = useState('')
     const [bannerHidden, setBannerHidden] = useState(false)
@@ -126,6 +127,7 @@ function ThoughtsApp() {
     const inboxCount = thoughts.filter((t) => !t.projectId).length
     const pending = thoughts.filter((t) => t.aiPending)
     const review = thoughts.filter((t) => t.status === 'needs_review')
+    const inboxReview = review.filter((t) => !t.aiPending)
     const notionRoot = getNotionRoot()
     const notionPending = thoughts.filter((t) => t.notion[notionRoot]?.revision !== t.revision).length
     const projectName = (id: string | null) => projects.find((p) => p.id === id)?.name || 'Входящие'
@@ -302,14 +304,21 @@ function ThoughtsApp() {
         if (!state.preferences.voiceReview && text.trim()) await saveText(text)
         else input.current?.focus()
     }
+    const assignReviewProject = (thought: LocalThought, projectId: string | null) => void run(async () => {
+        await api.updateThought(thought.id, { projectId, status: 'ready' }, thought.revision)
+        setReviewPicker(null)
+    })
     const noteCard = (t: LocalThought) => {
         const status = notionStatus(t)
+        const showReviewActions = page === 'thoughts' && selected === 'review'
+        const suggestedProject = t.classificationProposal?.project
+        const canAcceptProject = suggestedProject || t.projectId
         const color = state.preferences.projectColors
             ? projects.find((p) => p.id === t.projectId)?.color
             : undefined
         return (
+            <Box key={t.id} className="rounded-2xl border border-border bg-card">
             <Pressable
-                key={t.id}
                 accessibilityRole="button"
                 accessibilityLabel={`Открыть мысль: ${t.title}`}
                 onPress={() => {
@@ -319,12 +328,12 @@ function ThoughtsApp() {
                     setNoteMenu(false)
                     setEditing({ ...t })
                 }}
-                className="gap-4 rounded-3xl border border-border bg-card p-4"
+                className="gap-2 rounded-2xl p-4 active:bg-muted"
             >
-                <Text className="text-base leading-6">{t.rawText}</Text>
-                {t.summary ? (
+                <Text className="text-base font-semibold leading-6" numberOfLines={2}>{t.title || t.rawText}</Text>
+                {t.summary || (t.title && t.title !== t.rawText) ? (
                     <Text className="text-sm leading-5 text-muted-foreground" numberOfLines={2}>
-                        {t.summary}
+                        {t.summary || t.rawText}
                     </Text>
                 ) : null}
                 <Box className="flex-row items-center justify-between gap-3">
@@ -346,19 +355,48 @@ function ThoughtsApp() {
                         })}
                     </Text>
                 </Box>
-                <Text className={`text-xs ${status.error ? 'text-destructive' : 'text-muted-foreground'}`}>
-                    {status.label}
-                </Text>
-                {t.aiPending || t.status === 'needs_review' ? (
+                {status.error ? <Text className="text-xs text-destructive">{status.label}</Text> : null}
+                {!showReviewActions && (t.aiPending || t.status === 'needs_review') ? (
                     <Text className="text-xs text-muted-foreground">
                         {t.aiPending
                             ? sync.online
                                 ? 'Ждёт обработки AI'
                                 : 'AI обработает после подключения'
-                            : t.classificationProposal ? 'DeepSeek предложил новый проект или тип · проверь' : 'Нужно проверить классификацию'}
+                            : 'На проверку'}
                     </Text>
                 ) : null}
             </Pressable>
+            {showReviewActions ? (
+                <Box className="flex-row flex-wrap gap-2 border-t border-border px-4 py-2">
+                    {canAcceptProject ? (
+                        <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center rounded-xl bg-secondary px-3"
+                            onPress={() => {
+                                if (!suggestedProject || !t.classificationProposal) {
+                                    assignReviewProject(t, t.projectId)
+                                    return
+                                }
+                                const proposal = t.classificationProposal
+                                void run(async () => {
+                                    await localRepository.confirmClassification(t.id, t.revision, proposal, true)
+                                    void syncLocalData()
+                                })
+                            }}>
+                            <Text className="text-sm font-semibold text-primary">
+                                Принять «{suggestedProject?.name ?? projectName(t.projectId)}»
+                            </Text>
+                        </Pressable>
+                    ) : null}
+                    <Pressable accessibilityRole="button" disabled={busy || !projects.length} className="min-h-11 justify-center px-2"
+                        onPress={() => setReviewPicker(t)}>
+                        <Text className={`text-sm ${projects.length ? 'text-primary' : 'text-muted-foreground'}`}>Выбрать проект</Text>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center px-2"
+                        onPress={() => assignReviewProject(t, null)}>
+                        <Text className="text-sm">Оставить во входящих</Text>
+                    </Pressable>
+                </Box>
+            ) : null}
+            </Box>
         )
     }
     const thoughtsScreen = () => {
@@ -366,6 +404,7 @@ function ThoughtsApp() {
             (t) =>
                 (selected === 'all' ||
                     (selected === 'inbox' && !t.projectId) ||
+                    (selected === 'review' && !t.aiPending && t.status === 'needs_review') ||
                     (selected === 'notion-errors' && Boolean(notionStatus(t).error)) ||
                     t.projectId === selected) &&
                 (!search ||
@@ -386,6 +425,9 @@ function ThoughtsApp() {
                         {[
                             { id: 'all', name: 'Все' },
                             { id: 'inbox', name: `Входящие · ${inboxCount}` },
+                            ...(inboxReview.length || selected === 'review'
+                                ? [{ id: 'review', name: `На проверку · ${inboxReview.length}` }]
+                                : []),
                             ...(notionErrorCount || selected === 'notion-errors'
                                 ? [{ id: 'notion-errors', name: `Ошибки Notion · ${notionErrorCount}` }]
                                 : []),
@@ -475,11 +517,15 @@ function ThoughtsApp() {
                             <Heading>
                                 {selected === 'notion-errors' && !notionErrorCount
                                     ? 'Ошибок Notion нет'
-                                    : thoughts.length ? 'Ничего не найдено' : 'Пока нет мыслей'}
+                                    : selected === 'review' && !inboxReview.length
+                                        ? 'Всё разобрано'
+                                        : thoughts.length ? 'Ничего не найдено' : 'Пока нет мыслей'}
                             </Heading>
                             <Text className="text-center text-sm leading-5 text-muted-foreground">
                                 {selected === 'notion-errors' && !notionErrorCount
                                     ? 'Здесь появятся мысли, которые не удалось синхронизировать.'
+                                    : selected === 'review' && !inboxReview.length
+                                    ? 'Новые предложения появятся здесь.'
                                     : thoughts.length
                                     ? 'Попробуй другой поиск или фильтр.'
                                     : 'Запиши или продиктуй первую мысль. Интернет для сохранения не нужен.'}
@@ -909,6 +955,16 @@ function ThoughtsApp() {
                     </Pressable>
                 ))}
             </Sheet>
+            <Sheet visible={Boolean(reviewPicker)} title="Выбрать проект" onClose={() => setReviewPicker(null)}>
+                {error ? <Info warning>{error}</Info> : null}
+                {reviewPicker ? projects.map((project) => (
+                    <Pressable key={project.id} accessibilityRole="button" disabled={busy}
+                        onPress={() => assignReviewProject(reviewPicker, project.id)}
+                        className="min-h-11 justify-center border-b border-border">
+                        <Text>{project.name}</Text>
+                    </Pressable>
+                )) : null}
+            </Sheet>
             <Sheet
                 visible={projectEditor !== null}
                 title={projectEditor?.id ? 'Изменить проект' : 'Новый проект'}
@@ -1173,7 +1229,7 @@ function ThoughtsApp() {
                                     projectId: editing.projectId,
                                     category: editing.category,
                                     status: 'ready'
-                                })
+                                }, editing.revision)
                                 setNoteMode('read')
                             })
                         }
