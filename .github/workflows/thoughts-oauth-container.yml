@@ -1,7 +1,7 @@
 name: Build Thoughts OAuth container
 on:
     push:
-        branches: [develop, main]
+        branches: [master]
         paths:
             - 'thoughts-mvp/apps/api/src/notionOAuth*.mjs'
             - 'thoughts-mvp/apps/api/src/env.mjs'
@@ -73,11 +73,8 @@ jobs:
               shell: bash
               run: |
                   docker push "$IMAGE_NAME:$IMAGE_TAG"
-                  if [ "$GITHUB_REF" = refs/heads/main ]; then
+                  if [ "$GITHUB_REF" = refs/heads/master ]; then
                       docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:latest"
                       docker push "$IMAGE_NAME:latest"
-                  elif [ "$GITHUB_REF" = refs/heads/develop ]; then
-                      docker tag "$IMAGE_NAME:$IMAGE_TAG" "$IMAGE_NAME:develop"
-                      docker push "$IMAGE_NAME:develop"
                   fi
                   echo "Published \`$IMAGE_NAME:$IMAGE_TAG\`" >> "$GITHUB_STEP_SUMMARY"

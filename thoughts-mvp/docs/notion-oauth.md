@@ -14,7 +14,7 @@
 
 ## Контейнер и обновления
 
-Workflow **Build Thoughts OAuth container** проверяет OAuth, собирает образ, проверяет HTTP-запуск от непривилегированного пользователя и завершение по SIGTERM, затем публикует образ в `ghcr.io/tminww/thoughts-notion-oauth`. Он запускается при изменениях сервиса в `develop` и `main`. Каждый образ получает тег `sha-<полный commit SHA>`. Дополнительно обновляются теги `develop` и `latest` для соответствующих веток. Для установки используй закреплённый SHA-тег или digest из успешной сборки.
+Workflow **Build Thoughts OAuth container** проверяет OAuth, собирает образ, проверяет HTTP-запуск от непривилегированного пользователя и завершение по SIGTERM, затем публикует образ в `ghcr.io/tminww/thoughts-notion-oauth`. Он запускается при изменениях сервиса в `master`. Каждый образ получает тег `sha-<полный commit SHA>`. Дополнительно обновляется тег `latest` для `master`. Для установки используй закреплённый SHA-тег или digest из успешной сборки.
 
 На сервер скопируй каталог `thoughts-mvp/deploy/notion-oauth` в `/opt/thoughts-notion-oauth`. Нужен Docker Compose 2.30 или новее. В этом каталоге подготовь настройки.
 

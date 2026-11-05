@@ -1,7 +1,7 @@
 name: Thoughts checks
 on:
     push:
-        branches: [main, develop]
+        branches: [master]
     pull_request:
         paths: ['thoughts-mvp/**', '.github/workflows/thoughts-*.yml']
     workflow_dispatch:
