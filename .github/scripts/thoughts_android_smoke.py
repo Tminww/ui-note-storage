@@ -92,6 +92,10 @@ def voice_seconds():
 try:
     adb("install", "-r", sys.argv[1])
     adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.RECORD_AUDIO')
+    # The emulator runs with a hardware keyboard (see the workflow), so keep the
+    # soft IME hidden: it otherwise covers the fixed bottom controls while the
+    # accessibility tree still reports them as visible.
+    adb('shell', 'settings', 'put', 'secure', 'show_ime_with_hard_keyboard', '0')
     # A fresh emulator contains only disposable test data. Keep it offline, including launch,
     # so this verifies the embedded APK rather than replacing it with an OTA bundle.
     adb("shell", "svc", "wifi", "disable")
@@ -112,13 +116,12 @@ try:
     tap("Все")
     tap("Новая мысль")
     adb("shell", "input", "text", "Thoughts%soffline%stest")
-    adb("shell", "input", "keyevent", "KEYCODE_BACK")
     tap("Сохранить мысль")
-    find("Thoughts offline test", contains=True)
+    find("Открыть мысль: Thoughts offline test", contains=True)
     check_bottom_navigation()
     capture("03-saved-offline")
     launch()
-    find("Thoughts offline test", contains=True)
+    find("Открыть мысль: Thoughts offline test", contains=True)
     capture("04-restored-after-relaunch")
     tap("Открыть мысль:", contains=True)
     find("Исходный текст")
