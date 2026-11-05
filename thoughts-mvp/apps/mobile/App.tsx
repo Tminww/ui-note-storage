@@ -4,6 +4,7 @@ import {
     ActivityIndicator,
     AppState,
     BackHandler,
+    Keyboard,
     KeyboardAvoidingView,
     Linking,
     Modal,
@@ -61,6 +62,7 @@ function ThoughtsApp() {
     const [page, setPage] = useState<Page>('thoughts')
     const [section, setSection] = useState<Section>('home')
     const [draft, setDraft] = useState('')
+    const [keyboardOpen, setKeyboardOpen] = useState(false)
     const [selected, setSelected] = useState('all')
     const [draftProject, setDraftProject] = useState<string | null>(null)
     const [picker, setPicker] = useState(false)
@@ -92,6 +94,7 @@ function ThoughtsApp() {
         void localRepository.setDraft(text).catch((e) => setError(e.message))
     }
     const voice = useVoiceInput(persistDraft, state.preferences.voiceOnDevice)
+    const hasDraft = Boolean(draft.trim())
     const projects = state.projects.filter((p) => !p.deleted)
     const thoughts = state.thoughts
         .filter((t) => !t.deleted)
@@ -120,7 +123,7 @@ function ThoughtsApp() {
     const draftDestination = (projectId: string | null) => {
         if (!sync.notionConfigured) return 'Место сохранения: на телефоне'
         const project = projects.find((p) => p.id === projectId)
-        if (!project) return 'Notion → проект выберет AI или мысль останется во входящих'
+        if (!project) return null
         if (project.notionPageId && project.notionPageRoot === notionRoot) {
             return project.notionPageTitle
                 ? `Notion → ${project.notionPageTitle}`
@@ -143,6 +146,14 @@ function ThoughtsApp() {
             setBusy(false)
         }
     }
+    useEffect(() => {
+        const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true))
+        const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false))
+        return () => {
+            show.remove()
+            hide.remove()
+        }
+    }, [])
     useEffect(() => {
         let dispose: (() => void) | undefined
         let mounted = true
@@ -194,6 +205,7 @@ function ThoughtsApp() {
     async function saveText(text: string) {
         await run(async () => {
             const saved = await api.createThought(text, draftProject)
+            Keyboard.dismiss()
             setDraft('')
             setDraftProject(null)
             setUndoId(saved.id)
@@ -221,6 +233,7 @@ function ThoughtsApp() {
         }
     }
     const startVoice = () => {
+        Keyboard.dismiss()
         voiceAction.current++
         setVoiceScreen(true)
         haptic()
@@ -440,7 +453,7 @@ function ThoughtsApp() {
                         </Box>
                     )}
                 </ScrollView>
-                <Box className="gap-3 rounded-t-3xl border border-border bg-card px-5 py-4">
+                <Box className="shrink-0 gap-2 border-t border-border bg-card px-5 py-3">
                     <TextInput
                         ref={input}
                         accessibilityLabel="Новая мысль"
@@ -450,51 +463,33 @@ function ThoughtsApp() {
                         multiline
                         maxLength={10000}
                         editable={!busy}
-                        className="max-h-36 min-h-12 text-base text-foreground placeholder:text-muted-foreground"
+                        className="max-h-28 min-h-11 py-2 text-base text-foreground placeholder:text-muted-foreground"
                     />
-                    <Text className="text-xs text-muted-foreground">{draftDestination(draftProject)}</Text>
-                    {lastProject && (!draftProject || draftProject === lastProject.id) ? (
-                        <Action secondary disabled={busy} onPress={() =>
-                            setDraftProject(draftProject ? null : lastProject.id)
-                        }>
-                            {draftProject ? 'Вернуться к «Авто»' : `В проект «${lastProject.name}»`}
-                        </Action>
-                    ) : null}
-                    <Box className="flex-row items-center gap-3">
+                    <Box className="flex-row items-center justify-between gap-3">
                         <Pressable
-                            onPress={() => setPicker(true)}
-                            className="min-h-11 flex-1 flex-row items-center gap-2 rounded-full border border-border bg-background px-4"
+                            accessibilityRole="button"
+                            onPress={() => {
+                                Keyboard.dismiss()
+                                setPicker(true)
+                            }}
+                            className="min-h-11 max-w-[80%] flex-row items-center gap-2 rounded-full bg-secondary px-3"
                         >
-                            <Text className="flex-1 text-sm font-semibold" numberOfLines={1}>
+                            <Text className="shrink text-sm font-medium" numberOfLines={1}>
                                 Проект: {draftProject ? projectName(draftProject) : 'Авто'}
                             </Text>
                             <Icon name="chevron-down" size={16} />
                         </Pressable>
                         <Pressable
                             accessibilityRole="button"
-                            accessibilityLabel="Сохранить мысль"
-                            accessibilityState={{ disabled: !draft.trim() || busy }}
-                            disabled={!draft.trim() || busy}
-                            onPress={() => void saveThought()}
-                            className={`h-12 w-12 items-center justify-center rounded-full ${draft.trim() && !busy ? 'bg-primary' : 'bg-muted'}`}
+                            accessibilityLabel={hasDraft ? 'Сохранить мысль' : 'Начать диктовку'}
+                            disabled={busy || voice.nativeBusy}
+                            onPress={hasDraft ? () => void saveThought() : startVoice}
+                            className={`h-12 w-12 items-center justify-center rounded-full bg-primary ${busy || voice.nativeBusy ? 'opacity-50' : ''}`}
                         >
                             <Icon
-                                name="arrow-up"
-                                tone={
-                                    draft.trim() && !busy
-                                        ? 'text-primary-foreground'
-                                        : 'text-muted-foreground'
-                                }
+                                name={hasDraft ? 'arrow-up' : 'mic-outline'}
+                                tone="text-primary-foreground"
                             />
-                        </Pressable>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Начать диктовку"
-                            onPress={startVoice}
-                            disabled={busy || voice.nativeBusy}
-                            className="h-14 w-14 items-center justify-center rounded-full bg-primary"
-                        >
-                            <Icon name="mic-outline" size={27} tone="text-primary-foreground" />
                         </Pressable>
                     </Box>
                 </Box>
@@ -633,7 +628,7 @@ function ThoughtsApp() {
             <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
             <KeyboardAvoidingView
                 className="mx-auto w-full max-w-3xl flex-1"
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                behavior={Platform.OS === 'web' ? undefined : 'padding'}
             >
                 <Box className="min-h-24 flex-row items-center gap-3 px-5 py-4">
                     {page === 'settings' && section !== 'home' ? (
@@ -777,7 +772,7 @@ function ThoughtsApp() {
                         onError={setError}
                     />
                 )}
-                {page !== 'settings' || section === 'home' ? (
+                {!keyboardOpen && (page !== 'settings' || section === 'home') ? (
                     <SafeAreaView edges={['bottom']} className="border-t border-border bg-card">
                         <Box className="flex-row">
                             {(
@@ -840,7 +835,8 @@ function ThoughtsApp() {
                 </> : null}
             </Sheet>
             <Sheet visible={picker} title="Проект для мысли" onClose={() => setPicker(false)}>
-                {[{ id: null, name: 'Авто — AI выберет сам' }, ...projects].map((p) => (
+                {[{ id: null, name: 'Авто' }, ...(lastProject ? [lastProject] : []),
+                    ...projects.filter((project) => project.id !== lastProject?.id)].map((p) => (
                     <Pressable
                         key={p.id || 'auto'}
                         onPress={() => {
@@ -854,8 +850,8 @@ function ThoughtsApp() {
                             tone="text-primary"
                         />
                         <Box className="flex-1 py-2">
-                            <Text>{p.name}</Text>
-                            <Text className="text-xs text-muted-foreground">{draftDestination(p.id)}</Text>
+                            <Text>{p.name}{p.id === lastProject?.id ? ' · Недавний' : ''}</Text>
+                            {p.id ? <Text className="text-xs text-muted-foreground">{draftDestination(p.id)}</Text> : null}
                         </Box>
                     </Pressable>
                 ))}
