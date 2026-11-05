@@ -8,6 +8,7 @@ async function fixture() {
     const storage = { load: async () => raw, save: async (value) => { if (fail) throw new Error('Disk full'); raw = value } }
     const open = () => createLocalRepository(storage, () => `id-${++sequence}`)
     const repo = open()
+    await repo.preferences({ confirmAIProposals: true })
     const note = await repo.createThought('Купить семена', null)
     await repo.flush({ enrich: async () => ({ status: 'needs_review', classificationProposal: proposal, errorMessage: 'Jev unavailable' }) })
     return { repo, open, note: () => repo.snapshot().thoughts.find((n) => n.id === note.id), setFail: (value) => { fail = value } }
@@ -76,6 +77,7 @@ test('accepting the suggested project alone does not create a proposed type', as
         load: async () => stored,
         save: async (value) => { stored = value }
     }, () => String(++sequence))
+    await repository.preferences({ confirmAIProposals: true })
     const thought = await repository.createThought('Разобрать грядки', null)
     const proposal = {
         project: { name: 'Сад', description: '' },
@@ -89,4 +91,16 @@ test('accepting the suggested project alone does not create a proposed type', as
     assert.equal(repository.snapshot().customCategories.length, 0)
     assert.equal(saved.classificationProposal.category.name, 'Уход')
     assert.equal(saved.classificationProposal.project, undefined)
+})
+
+test('AI creates a suggested project and type by default and reuses matching names', async () => {
+    let raw = null, sequence = 0
+    const repo = createLocalRepository({ load: async () => raw, save: async (value) => { raw = value } }, () => `id-${++sequence}`)
+    await repo.createThought('Купить семена', null)
+    await repo.createThought('Купить грунт', null)
+    await repo.flush({ enrich: async () => ({ status: 'needs_review', classificationProposal: proposal }) })
+    assert.equal(repo.snapshot().projects.length, 1)
+    assert.equal(repo.snapshot().customCategories.length, 1)
+    assert.ok(repo.snapshot().thoughts.every((note) => note.projectId === repo.snapshot().projects[0].id))
+    assert.ok(repo.snapshot().thoughts.every((note) => note.classificationProposal === null && note.status === 'ready'))
 })

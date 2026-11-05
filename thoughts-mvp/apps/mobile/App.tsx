@@ -125,7 +125,9 @@ function ThoughtsApp() {
     const [reviewPicker, setReviewPicker] = useState<LocalThought | null>(null)
     const [showSearch, setShowSearch] = useState(false)
     const [search, setSearch] = useState('')
-    const [bannerHidden, setBannerHidden] = useState(false)
+    const [showNotifications, setShowNotifications] = useState(false)
+    const unreadNotifications = state.notifications.filter((item) => !item.read).length
+    const observedHistory = useRef<Set<string> | null>(null)
     const [error, setError] = useState('')
     const [notice, setNotice] = useState('')
     const [undoId, setUndoId] = useState<string | null>(null)
@@ -185,7 +187,7 @@ function ThoughtsApp() {
     }
     const editingNotion = savedEditing ? notionStatus(savedEditing) : null
     const editingConflict = savedEditing?.notionConflicts?.[notionRoot]
-    const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.id}` : null
+    const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.parentId || editingNotion.link.id}${editingNotion.link.parentId ? '#' + editingNotion.link.id.replace(/-/g, '') : ''}` : null
     const editingText = savedEditing
         ? [...new Set([savedEditing.title, savedEditing.summary, savedEditing.rawText].map((text) => text.trim()).filter(Boolean))].join('\n\n')
         : ''
@@ -217,6 +219,35 @@ function ThoughtsApp() {
             setBusy(false)
         }
     }
+    useEffect(() => {
+        if (ready && copyNotice) void localRepository.notify(copyNotice).catch(() => {})
+    }, [ready, copyNotice])
+    useEffect(() => {
+        if (ready && updates.ready) void localRepository.notify('Доступно обновление. Открой «Настройки → Обновления».').catch(() => {})
+    }, [ready, updates.ready])
+    useEffect(() => {
+        if (ready && error) void localRepository.notify(error, 'error').catch(() => {})
+    }, [ready, error])
+    useEffect(() => {
+        if (ready && notice) void localRepository.notify(notice).catch(() => {})
+    }, [ready, notice])
+    useEffect(() => {
+        if (ready && sync.error) void localRepository.notify(sync.error, 'error').catch(() => {})
+    }, [ready, sync.error])
+    useEffect(() => {
+        if (!ready) return
+        if (!observedHistory.current) {
+            observedHistory.current = new Set(state.aiHistory.filter((entry) => entry.finishedAt).map((entry) => entry.id))
+            return
+        }
+        for (const entry of state.aiHistory) {
+            if (!entry.finishedAt || observedHistory.current.has(entry.id)) continue
+            observedHistory.current.add(entry.id)
+            const title = entry.result?.title || entry.inputText.slice(0, 60)
+            void localRepository.notify(entry.status === 'error' ? `Не удалось обработать «${title}». ${entry.error || ''}` : `Обработана мысль «${title}»`,
+                entry.status === 'error' ? 'error' : 'info', entry.thoughtId, `ai:${entry.id}`).catch(() => {})
+        }
+    }, [ready, state.aiHistory])
     useEffect(() => {
         const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true))
         const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false))
@@ -280,7 +311,7 @@ function ThoughtsApp() {
             setDraft('')
             setDraftProject(null)
             setUndoId(saved.id)
-            setNotice('Сохранено на телефоне')
+            void localRepository.notify('Мысль сохранена', 'info', saved.id).catch(() => {})
             haptic()
         })
     }
@@ -385,18 +416,18 @@ function ThoughtsApp() {
                         </Text>
                     ) : null}
                     <Box className="flex-row items-center justify-between gap-3">
-                        <Box className="flex-row items-center gap-2 rounded-full bg-secondary px-3 py-1">
+                        <Box className="min-w-0 max-w-[80%] shrink flex-row items-center gap-2 rounded-full bg-secondary px-3 py-1">
                             {color ? (
                                 <Box
                                     className="h-2 w-2 rounded-full"
                                     style={{ backgroundColor: color }}
                                 />
                             ) : null}
-                            <Text className="text-xs font-semibold text-primary">
+                            <Text className="shrink text-xs font-semibold text-primary" numberOfLines={1}>
                                 {projectName(t.projectId)}
                             </Text>
                         </Box>
-                        <Text className="text-xs text-muted-foreground">
+                        <Text className="shrink-0 text-xs text-muted-foreground">
                             {new Date(t.createdAt).toLocaleTimeString('ru-RU', {
                                 hour: '2-digit',
                                 minute: '2-digit'
@@ -502,32 +533,6 @@ function ThoughtsApp() {
                     keyboardShouldPersistTaps="handled"
                     contentContainerClassName="gap-3 px-5 pb-5"
                 >
-                    {!bannerHidden && !sync.notionConfigured ? (
-                        <Box className="flex-row items-center gap-3 rounded-3xl bg-warning p-4">
-                            <Text className="flex-1 text-sm leading-5 text-warning-foreground">
-                                Мысли хранятся на телефоне. Подключи Notion, чтобы сохранять копию
-                                там.
-                            </Text>
-                            <Pressable
-                                onPress={() => openSettings('notion')}
-                                className="min-h-12 justify-center rounded-full bg-card px-4"
-                            >
-                                <Text className="text-sm font-semibold">Настроить</Text>
-                            </Pressable>
-                            <Pressable
-                                accessibilityLabel="Скрыть подсказку"
-                                onPress={() => setBannerHidden(true)}
-                            >
-                                <Icon name="close" size={18} tone="text-warning-foreground" />
-                            </Pressable>
-                        </Box>
-                    ) : null}
-                    {!sync.online ? (
-                        <Info warning>
-                            Нет сети. Всё сохраняется на телефоне; очередь продолжится после
-                            подключения.
-                        </Info>
-                    ) : null}
                     {showSearch ? (
                         <Field
                             label="Поиск мыслей"
@@ -599,17 +604,18 @@ function ThoughtsApp() {
                         </Box>
                     )}
                 </ScrollView>
-                <Box className="shrink-0 gap-2 border-t border-border bg-card px-5 py-3">
+                <Box className="mx-4 mb-3 shrink-0 gap-3 rounded-3xl border border-border bg-card p-4">
+                    <Text className="text-sm font-semibold">Записать мысль</Text>
                     <TextInput
                         ref={input}
                         accessibilityLabel="Новая мысль"
-                        placeholder="Что у тебя в голове?"
+                        placeholder="Напиши, что хочешь сохранить…"
                         value={draft}
                         onChangeText={persistDraft}
                         multiline
                         maxLength={10000}
                         editable={!busy}
-                        className="max-h-28 min-h-11 py-2 text-base text-foreground placeholder:text-muted-foreground"
+                        className="max-h-32 min-h-20 rounded-2xl border border-input bg-background px-3 py-3 text-base text-foreground placeholder:text-muted-foreground focus:border-primary"
                     />
                     <Box className="flex-row items-center justify-between gap-3">
                         <Pressable
@@ -643,10 +649,7 @@ function ThoughtsApp() {
         )
     }
     const projectsScreen = () => (
-        <ScrollView className="flex-1" contentContainerClassName="gap-5 px-5 pb-8">
-            <Text className="text-sm leading-5 text-muted-foreground">
-                Чем точнее описание проекта, тем лучше AI раскладывает мысли.
-            </Text>
+        <ScrollView className="flex-1" contentContainerClassName="gap-2 px-5 pb-8">
             <Text className="mt-1 text-sm font-semibold text-muted-foreground">Быстрый старт</Text>
             <Box className="flex-row flex-wrap gap-2">
                 {['Работа', 'Разработка', 'Обучение', 'Личное'].map((name, index) => (
@@ -677,16 +680,11 @@ function ThoughtsApp() {
                         setSelected(p.id)
                         setPage('thoughts')
                     }}
-                    className="flex-row items-center gap-3 rounded-3xl border border-border bg-card p-4"
+                    className="min-h-16 flex-row items-center gap-3 border-b border-border py-2"
                 >
-                    <Box className="h-12 w-12 items-center justify-center rounded-2xl bg-secondary">
-                        <Icon name="folder-outline" tone="text-primary" size={25} />
-                    </Box>
-                    <Box className="flex-1 gap-1">
-                        <Text className="text-base font-semibold">{p.name}</Text>
-                        <Text className="text-sm leading-5 text-muted-foreground">
-                            {p.description || 'Добавить описание для AI'}
-                        </Text>
+                    <Icon name="folder-outline" tone="text-primary" size={20} />
+                    <Box className="min-w-0 flex-1 gap-1">
+                        <Text className="text-base font-semibold" numberOfLines={1}>{p.name}</Text>
                         <Text className="text-xs text-muted-foreground">
                             {thoughts.filter((t) => t.projectId === p.id).length} мыслей
                         </Text>
@@ -712,7 +710,6 @@ function ThoughtsApp() {
                     Выбери шаблон выше или создай свой проект.
                 </Text>
             ) : null}
-            <Info>Опиши проект своими словами. Этого хватит, чтобы AI понимал контекст.</Info>
         </ScrollView>
     )
     const aiScreen = () => (
@@ -827,6 +824,14 @@ function ThoughtsApp() {
                             </Box>
                         ) : null}
                     </Box>
+                    <Pressable accessibilityRole="button" accessibilityLabel={`Уведомления, ${unreadNotifications} непрочитанных`}
+                        className="h-12 w-12 items-center justify-center" onPress={() => {
+                            setShowNotifications(true)
+                            void localRepository.readNotifications()
+                        }}>
+                        <Icon name="notifications-outline" tone="text-foreground" />
+                        {unreadNotifications ? <Box className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" /> : null}
+                    </Pressable>
                     {page === 'thoughts' ? (
                         <Pressable
                             accessibilityLabel="Поиск"
@@ -851,51 +856,6 @@ function ThoughtsApp() {
                         </Action>
                     ) : null}
                 </Box>
-                {error ? (
-                    <Box className="mx-5 mb-3 flex-row items-center gap-2 rounded-2xl bg-warning p-3">
-                        <Text className="flex-1 text-sm text-warning-foreground">{error}</Text>
-                        <Pressable accessibilityLabel="Закрыть ошибку" onPress={() => setError('')}>
-                            <Icon name="close" tone="text-warning-foreground" />
-                        </Pressable>
-                    </Box>
-                ) : null}
-                {notice ? (
-                    <Box className="mx-5 mb-3 flex-row items-center gap-2 rounded-2xl bg-secondary px-4 py-3">
-                        <Text className="flex-1 text-sm">{notice}</Text>
-                        {undoId ? (
-                            <Pressable
-                                onPress={() =>
-                                    void run(async () => {
-                                        await api.deleteThought(undoId)
-                                        setUndoId(null)
-                                        setNotice('Сохранение отменено')
-                                    })
-                                }
-                            >
-                                <Text className="text-sm font-semibold text-primary">Отменить</Text>
-                            </Pressable>
-                        ) : null}
-                        <Pressable
-                            accessibilityLabel="Закрыть уведомление"
-                            onPress={() => {
-                                setNotice('')
-                                setUndoId(null)
-                            }}
-                        >
-                            <Icon name="close" size={18} />
-                        </Pressable>
-                    </Box>
-                ) : null}
-                {updates.ready && page !== 'settings' ? (
-                    <Pressable
-                        onPress={() => openSettings('updates')}
-                        className="mx-5 mb-3 rounded-2xl bg-secondary p-3"
-                    >
-                        <Text className="text-sm text-primary">
-                            Новая версия скачана · Применить
-                        </Text>
-                    </Pressable>
-                ) : null}
                 {!ready ? (
                     <Box className="flex-1 items-center justify-center gap-3">
                         <ActivityIndicator />
@@ -962,6 +922,31 @@ function ThoughtsApp() {
                     </SafeAreaView>
                 ) : null}
             </KeyboardAvoidingView>
+            <Sheet visible={showNotifications} title="Уведомления" onClose={() => setShowNotifications(false)}>
+                {!state.notifications.length ? <Text className="text-muted-foreground">Здесь появятся результаты обработки и подключения.</Text> : null}
+                {[...state.notifications].reverse().map((item) => (
+                    <Box key={item.id} className="gap-2 border-b border-border pb-3">
+                        <Text selectable className={item.kind === 'error' ? 'text-destructive' : ''}>{item.message}</Text>
+                        <Text className="text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleString('ru-RU')}</Text>
+                        {item.thoughtId && thoughts.some((note) => note.id === item.thoughtId) ? (
+                            <Action secondary onPress={() => {
+                                setShowNotifications(false)
+                                setEditing({ ...thoughts.find((note) => note.id === item.thoughtId)! })
+                                setNoteMode('read')
+                                setNoteMenu(false)
+                            }}>Открыть мысль</Action>
+                        ) : null}
+                        {item.thoughtId && item.thoughtId === undoId ? (
+                            <Action secondary disabled={busy} onPress={() => void run(async () => {
+                                await api.deleteThought(item.thoughtId!)
+                                setUndoId(null)
+                                setNotice('Сохранение отменено')
+                            })}>Отменить сохранение</Action>
+                        ) : null}
+                    </Box>
+                ))}
+                {state.notifications.length ? <Action secondary onPress={() => void localRepository.clearNotifications()}>Очистить уведомления</Action> : null}
+            </Sheet>
             <Sheet visible={Boolean(historyEntry)} title="Обработка ИИ" onClose={() => setHistoryId(null)}>
                 {historyEntry ? <>
                     <Info>{historyStatus[historyEntry.status]} · {new Date(historyEntry.startedAt).toLocaleString('ru-RU')}</Info>
@@ -1181,7 +1166,6 @@ function ThoughtsApp() {
                     </Box>
                 ) : null}
                 {error ? <Info warning>{error}</Info> : null}
-                {copyNotice && noteMode === 'read' ? <Text accessibilityLiveRegion="polite" className="text-sm text-primary">{copyNotice}</Text> : null}
                 {noteMode === 'read' && savedEditing ? <>
                     <Box className="gap-2">
                         <Text className="text-sm text-muted-foreground">{projectName(savedEditing.projectId)} · {categories[savedEditing.category] || 'Заметка'}</Text>

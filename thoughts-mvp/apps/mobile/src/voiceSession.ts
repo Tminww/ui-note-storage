@@ -16,7 +16,7 @@ type SpeechPort = {
 }
 
 /** Owns the user session independently of delayed OS recognizer callbacks. */
-export function createVoiceSession(speech: SpeechPort, onText: (text: string) => void, now = () => performance.now()) {
+export function createVoiceSession(speech: SpeechPort, onText: (text: string) => void, now = () => performance.now(), silenceMs = 4000) {
     let state: VoiceSnapshot = { phase: 'idle', seconds: 0, level: 0, text: '', error: '', hint: '', nativeBusy: false }
     const listeners = new Set<() => void>()
     let generation = 0
@@ -27,6 +27,7 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
     let runningSince: number | null = null
     let nativeStartAt: number | null = null
     let listeningAt = 0
+    let lastActivityAt: number | null = null
     let stopDeadline = 0
     let restartAt: number | null = null
     let accepting = false
@@ -94,11 +95,24 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
             if (state.nativeBusy) speech.abort()
         }
     }
+    const pause = () => {
+            wantsRecording = false
+            restartAt = null
+            generation++
+            freeze()
+            nativeStartAt = null
+            if (!state.nativeBusy) { emit({ phase: 'paused', hint: '' }); return }
+            if (state.phase === 'pausing' || state.phase === 'finishing') return
+            emit({ phase: 'pausing', hint: 'Завершаем последнюю фразу…' })
+            stopDeadline = now() + 4000
+            try { speech.stop() } catch (error) { fail(String(error)); speech.abort() }
+    }
     return {
         snapshot: () => state,
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
         start(text: string) {
             if (state.nativeBusy || state.phase === 'starting') return
+            lastActivityAt = null
             original = text
             committed = text.trimEnd()
             interim = ''
@@ -112,21 +126,11 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
         resume() {
             if (state.nativeBusy || state.phase === 'starting') return
             retainInterim()
+            lastActivityAt = null
             wantsRecording = true
             return begin()
         },
-        pause() {
-            wantsRecording = false
-            restartAt = null
-            generation++
-            freeze()
-            nativeStartAt = null
-            if (!state.nativeBusy) { emit({ phase: 'paused', hint: '' }); return }
-            if (state.phase === 'pausing' || state.phase === 'finishing') return
-            emit({ phase: 'pausing', hint: 'Завершаем последнюю фразу…' })
-            stopDeadline = now() + 4000
-            try { speech.stop() } catch (error) { fail(String(error)); speech.abort() }
-        },
+        pause,
         finish(): Promise<string> {
             if (finishPromise) return finishPromise
             wantsRecording = false
@@ -166,6 +170,7 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
             if (!accepting || !wantsRecording || state.phase !== 'starting') return
             nativeStartAt = null
             listeningAt = now()
+            lastActivityAt ??= now()
             runningSince = now()
             emit({ phase: 'listening', hint: '' })
         },
@@ -179,6 +184,7 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
             const text = event.results[0]?.transcript.trim()
             if (!text) return
             runHasText = true
+            if (text !== interim) lastActivityAt = now()
             interim = text
             publishText()
             if (event.isFinal) retainInterim()
@@ -187,6 +193,7 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
         onVolume(value: number) {
             if (state.phase !== 'listening') return
             if (value > 0) heardSound = true
+            if (value > 1.5) lastActivityAt = now()
             emit({ level: Math.round(Math.min(1, Math.max(0, value / 10)) * 10) / 10 })
         },
         onError(message: string, aborted = false) {
@@ -203,7 +210,7 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
             emit({ nativeBusy: false })
             if (finishResolve) { complete(); return }
             if (!wasAccepting) return
-            if (wantsRecording && runHasText) {
+            if (wantsRecording && runHasText && (!silenceMs || lastActivityAt === null || now() - lastActivityAt < silenceMs)) {
                 // Legacy Android recognizers end after every phrase. Restart only
                 // after their end callback, with no recording time counted in the gap.
                 restartAt = now() + 300
@@ -218,6 +225,10 @@ export function createVoiceSession(speech: SpeechPort, onText: (text: string) =>
             if (nativeStartAt !== null && now() - nativeStartAt >= 8000) {
                 fail('Системное распознавание не запустилось. Проверь службу голосового ввода и доступ к микрофону в настройках Android.')
                 speech.abort()
+            }
+            if (state.phase === 'listening' && silenceMs > 0 && lastActivityAt !== null && now() - lastActivityAt >= silenceMs) {
+                pause()
+                emit({ hint: 'Пауза после четырёх секунд тишины.' })
             }
             if (state.phase === 'listening') {
                 emit({ seconds: Math.floor(elapsed() / 1000) })

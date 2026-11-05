@@ -5,7 +5,7 @@ import { Action, Field, Icon, Info, Toggle, type IconName } from '../components/
 import { api, getApiUrl, saveApiUrl, type Settings } from './api'
 import { localRepository, syncSnapshot, retryLocalData, importServerData, changeNotionConnection } from './localService'
 import { getManualNotionRoot, getNotionOAuth, getNotionRoot, hasSecret, readSecret, saveNotionOAuth, saveSecret, setNotionRoot } from './deviceConfig'
-import { parseNotionProjectPage, verifyNotionConnection } from './notionStorage'
+import { createNotionInbox, parseNotionProjectPage, verifyNotionConnection } from './notionStorage'
 import { authorizeNotionStorage, notionOAuthService } from './notionOAuth'
 import { NotionPagePicker } from './NotionPagePicker'
 import { connectNotionMcp, notionMcpDisconnect, notionMcpIsConnected } from './notionMcp'
@@ -267,6 +267,13 @@ export function SettingsScreen({
                     <Text className="text-sm text-muted-foreground">Подключение Notion доступно в приложении Android и iOS.</Text>
                 ) : pickNotionPage ? (
                     <NotionPagePicker token={authorization?.accessToken} disabled={busy}
+                        onCreate={(parent) => {
+                            const credentials = authorization || getNotionOAuth()
+                            if (credentials) void run(async () => {
+                                const page = await createNotionInbox(parent.id, credentials.accessToken)
+                                await activateNotionPage(page.id, credentials)
+                            })
+                        }}
                         onSelect={(page) => {
                             const credentials = authorization || getNotionOAuth()
                             if (credentials) void run(() => activateNotionPage(page.id, credentials))
@@ -376,6 +383,15 @@ export function SettingsScreen({
     else if (section === 'ai')
         content = (
             <>
+                <Box className="overflow-hidden rounded-2xl border border-border bg-card">
+                    <Toggle title="Спрашивать перед созданием проекта или типа"
+                        caption="По умолчанию ИИ создаёт подходящие проекты и типы автоматически."
+                        value={preferences.confirmAIProposals}
+                        onChange={(confirmAIProposals) => {
+                            void localRepository.preferences({ confirmAIProposals }).then(retryLocalData).catch((e) => onError(e.message))
+                        }}
+                    />
+                </Box>
                 <Info>
                     Обработка идёт через интернет. До подключения AI исходный текст остаётся в
                     очереди на телефоне.
@@ -490,7 +506,7 @@ export function SettingsScreen({
                         : 'Этот APK не поддерживает обновления. Один раз установи новую сборку Thoughts с подключённым Expo.'}
                 </Info>
                 <Box className="gap-2 rounded-3xl border border-border bg-card p-4">
-                    <Text className="text-base font-semibold">Thoughts · интерфейс 0.3.6</Text>
+                    <Text className="text-base font-semibold">Thoughts · интерфейс 0.3.7</Text>
                     <Text className="text-sm">Дата выпуска установленного обновления: {updates.publishedAt ? new Date(updates.publishedAt).toLocaleString('ru-RU') : 'недоступна в режиме разработки'}</Text>
                     {updates.firstLaunchedAt ? <Text className="text-sm text-muted-foreground">Впервые запущено на этом устройстве: {new Date(updates.firstLaunchedAt).toLocaleString('ru-RU')}</Text> : null}
                     <Text className="text-sm text-muted-foreground">{updates.embedded ? 'Версия из APK' : 'Обновление Expo'}{updates.updateId ? ` · ${updates.updateId.slice(0, 8)}` : ''}</Text>

@@ -31,13 +31,15 @@ async function fixture() {
             }
         ]
     ])
+    const rootBlocks = []
+    pages.set('root', { id: 'root', name: 'Root', blocks: rootBlocks })
     const nested = new Map()
     const denied = new Set()
     const insertBlocks = (blocks) => blocks.map((block) => {
         const id = `block-${++sequence}`
         if (block.type !== 'toggle') return { ...block, id }
         const { children, ...toggle } = block.toggle
-        nested.set(id, insertBlocks(children))
+        nested.set(id, insertBlocks(children || []))
         return { ...block, id, toggle, has_children: true }
     })
     const calls = []
@@ -67,7 +69,7 @@ async function fixture() {
                 id,
                 name: body.properties.title.title[0].text.content,
                 parent: body.parent.page_id,
-                blocks: insertBlocks(body.children)
+                blocks: insertBlocks(body.children || [])
             })
             if (loseCreate) {
                 loseCreate = false
@@ -81,7 +83,9 @@ async function fixture() {
                 result = {
                     results: insertBlocks(body.children)
                 }
-                pages.get(id).blocks.push(...result.results)
+                const target = pages.get(id)?.blocks || nested.get(id)
+                target.push(...result.results)
+                if (loseCreate) { loseCreate = false; throw new Error('Response lost') }
             } else
                 result = {
                     results: [
@@ -102,6 +106,10 @@ async function fixture() {
                 const index = blocks.findIndex((block) => block.id === blockId)
                 if (index < 0) continue
                 if (method === 'PATCH') Object.assign(blocks[index], body)
+                if (method === 'GET') {
+                    const parent = [...pages.values()].find((p) => p.blocks === blocks)
+                    result = { ...blocks[index], parent: { page_id: parent?.id } }
+                }
                 if (method === 'DELETE') blocks.splice(index, 1)
             }
         } else if (move) {
@@ -138,7 +146,7 @@ async function fixture() {
     const api = await import(
         `data:text/javascript;base64,${Buffer.from(stub + source + `\n// ${Math.random()}`).toString('base64')}`
     )
-    return { api, pages, nested, calls, denied, loseNextCreate: () => (loseCreate = true) }
+    return { api, pages, nested, rootBlocks, calls, denied, loseNextCreate: () => (loseCreate = true) }
 }
 test('updating a project preserves user-authored Notion paragraphs', async () => {
     const f = await fixture()
@@ -249,14 +257,14 @@ test('a linked page recovers only app notes for its registered project', async (
         id: 'local-note', title: 'Ритм', rawText: 'Тренировка', revision: 1, notion: {},
         notionErrors: { root: { revision: 1, message: 'Local error detail' } }
     }
-    const noteId = await adapter.thought(note, 'p')
-    const toggle = f.pages.get(noteId).blocks.find((b) => b.type === 'toggle')
+    const { id: noteId } = await adapter.thought(note, 'p')
+    const toggle = f.nested.get(noteId).find((b) => b.type === 'toggle')
     assert.doesNotMatch(f.nested.get(toggle.id)[0].paragraph.rich_text[0].text.content, /notionErrors|Local error detail/)
-    assert.equal(await adapter.thought(note, target, noteId, 'p'), noteId)
-    assert.equal(f.pages.get(noteId).parent, target)
+    const moved = await adapter.thought(note, target, noteId, 'p')
+    assert.equal(moved.parentId, target)
     const snapshot = await f.api.getNotionSnapshot()
     assert.equal(snapshot.projects[0].notionPageId, target)
-    assert.deepEqual(snapshot.thoughts.map(({ id, projectId }) => [id, projectId]), [[noteId, 'p']])
+    assert.deepEqual(snapshot.thoughts.map(({ id, projectId }) => [id, projectId]), [[moved.id, 'p']])
     assert.equal(f.pages.get(target).name, 'Existing page')
     assert.equal(f.pages.get(target).blocks[0].id, 'user')
 })
@@ -282,11 +290,13 @@ test('edits in the managed Notion text are imported and stale writes are refused
         id: 'local-note', title: 'Задачи', rawText: 'Позвонить', summary: '- [ ] Позвонить',
         updatedAt: '2026-01-01T00:00:00.000Z', revision: 1, syncVersion: 'v1', notion: {}
     }
-    const pageId = await adapter.thought(note, null)
-    const page = f.pages.get(pageId)
+    const { id: pageId } = await adapter.thought(note, null)
+    const page = { blocks: f.nested.get(pageId) }
     const managed = page.blocks.find((block) => block.type === 'paragraph')
     managed.paragraph.rich_text[0].text.content = 'Резюме\n☑ Позвонить\n\nИсходный текст\nПозвонил'
-    page.name = 'Звонок завершён'
+    const toggle = f.calls.find((c) => c.method === 'PATCH' && c.path === '/blocks/root/children').body.children[0]
+    assert.equal(toggle.type, 'toggle')
+    f.rootBlocks.find((b) => b.id === pageId).toggle.rich_text[0].text.content = 'Звонок завершён'
     const remote = (await f.api.getNotionSnapshot([pageId])).thoughts[0]
     assert.equal(remote.title, 'Звонок завершён')
     assert.equal(remote.rawText, 'Позвонил')
@@ -297,4 +307,55 @@ test('edits in the managed Notion text are imported and stale writes are refused
         notion: { root: { id: pageId, revision: 1, version: 'v1' } }
     }, null, pageId), /Страница изменилась/)
     assert.match(managed.paragraph.rich_text[0].text.content, /Позвонил/)
+})
+
+
+test('a lost toggle append is reconciled, updated and removed without duplicate notes', async () => {
+    const f = await fixture()
+    const note = { id: 'stable-note', title: 'Коротко', rawText: 'Полный текст', revision: 1, notion: {} }
+    const first = await f.api.createNotionSyncAdapter()
+    f.loseNextCreate()
+    await assert.rejects(first.thought(note, null), /Response lost/)
+    const committed = (await f.api.getNotionSnapshot()).thoughts[0]
+    assert.equal(committed.rawText, 'Полный текст')
+    const textBlocks = f.nested.get(committed.id).filter((b) => b.type === 'paragraph')
+    assert.equal(textBlocks.length, 1)
+    assert.equal(textBlocks[0].paragraph.rich_text[0].text.content, 'Полный текст')
+    const second = await f.api.createNotionSyncAdapter()
+    const remote = await second.thought(note, null)
+    assert.equal(remote.parentId, 'root')
+    assert.equal(f.rootBlocks.filter((b) => b.type === 'toggle').length, 1)
+    assert.equal((await f.api.getNotionSnapshot()).thoughts[0].rawText, 'Полный текст')
+    await second.thought({ ...note, title: 'Обновлено', rawText: 'Другой текст' }, null, remote.id)
+    assert.equal((await f.api.getNotionSnapshot()).thoughts[0].title, 'Обновлено')
+    await second.remove(remote.id)
+    assert.equal((await f.api.getNotionSnapshot()).thoughts.length, 0)
+})
+
+test('toggle relocation reconciles a lost response and preserves additional user blocks', async () => {
+    const f = await fixture()
+    const note = { id: 'stable-note', title: 'Коротко', rawText: 'Полный текст', revision: 1, notion: {} }
+    const first = await f.api.createNotionSyncAdapter()
+    const old = await first.thought(note, null)
+    f.loseNextCreate()
+    await assert.rejects(first.thought(note, 'p', old.id), /Response lost/)
+    const snapshot = await f.api.getNotionSnapshot()
+    assert.equal(snapshot.thoughts.length, 1)
+    const second = await f.api.createNotionSyncAdapter(snapshot)
+    const moved = await second.thought(note, 'p', old.id)
+    assert.notEqual(moved.id, old.id)
+    assert.equal(f.rootBlocks.filter((b) => b.type === 'toggle').length, 0)
+    f.nested.get(moved.id).push(paragraph('personal', 'Мои дополнения'))
+    await assert.rejects(second.thought(note, null, moved.id), /дополнительные блоки/)
+    assert.ok(f.nested.get(moved.id).some((b) => b.id === 'personal'))
+})
+
+
+test('dedicated Thoughts page creation reuses a committed page after a lost acknowledgement', async () => {
+    const f = await fixture()
+    f.loseNextCreate()
+    await assert.rejects(f.api.createNotionInbox('root', 'candidate-token'), /Response lost/)
+    const page = await f.api.createNotionInbox('root', 'candidate-token')
+    assert.equal(page.title, 'Thoughts')
+    assert.equal(f.calls.filter((c) => c.path === '/pages' && c.method === 'POST').length, 1)
 })

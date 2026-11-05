@@ -9,8 +9,9 @@ export type Preferences = {
     voiceOnDevice: boolean
     voiceReview: boolean
     haptics: boolean
+    confirmAIProposals: boolean
 }
-export type RemoteLink = { id: string; revision: number; version?: string }
+export type RemoteLink = { id: string; revision: number; version?: string; parentId?: string }
 export type LocalProject = Project & {
     revision: number
     deleted: boolean
@@ -48,6 +49,15 @@ export type AIHistoryEntry = {
     applied?: boolean
     usage?: AIUsage
 }
+export type AppNotification = {
+    id: string
+    message: string
+    createdAt: string
+    read: boolean
+    kind: 'info' | 'error'
+    thoughtId?: string
+    source?: string
+}
 export type LocalState = {
     version: 1
     projects: LocalProject[]
@@ -57,6 +67,7 @@ export type LocalState = {
     preferences: Preferences
     aiHistory: AIHistoryEntry[]
     customCategories: ThoughtType[]
+    notifications: AppNotification[]
 }
 export type DocumentStorage = {
     load: () => Promise<string | null>
@@ -76,7 +87,7 @@ export type SyncAdapters = {
             parentPageId: string | null,
             remoteId?: string,
             remoteProjectId?: string | null
-        ) => Promise<string>
+        ) => Promise<string | { id: string; parentId: string }>
         remove: (id: string) => Promise<void>
     }
 }
@@ -100,6 +111,7 @@ const initial = (): LocalState => ({
     thoughts: [],
     aiHistory: [],
     customCategories: [],
+    notifications: [],
     draft: '',
     lastProjectId: null,
     preferences: {
@@ -108,7 +120,8 @@ const initial = (): LocalState => ({
         projectColors: true,
         voiceOnDevice: false,
         voiceReview: true,
-        haptics: true
+        haptics: true,
+        confirmAIProposals: false
     }
 })
 
@@ -142,7 +155,7 @@ export function createLocalRepository(
                     'Не удалось прочитать локальную базу. Данные сохранены, база не перезаписана.'
                 )
             }
-            state = { ...saved, lastProjectId: saved.lastProjectId ?? null, customCategories: Array.isArray(saved.customCategories) ? saved.customCategories : [], aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
+            state = { ...saved, notifications: Array.isArray(saved.notifications) ? saved.notifications : [], lastProjectId: saved.lastProjectId ?? null, customCategories: Array.isArray(saved.customCategories) ? saved.customCategories : [], aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
             for (const thought of state.thoughts) {
                 const type = thought.categoryDefinition
                 if (type?.id.startsWith('custom:') && !state.customCategories.some((c) => c.id === type.id)) state.customCategories.push(type)
@@ -195,9 +208,49 @@ export function createLocalRepository(
         local.aiPending = remote.status === 'pending'
         delete local.aiFeedback
         local.attempts = local.retryAt = 0
-        local.notion[root] = { id: remote.id, revision: local.revision, version: notionVersionOf(remote) }
+        local.notion[root] = { id: remote.id, parentId: remote.notionParentId, revision: local.revision, version: notionVersionOf(remote) }
         if (local.notionConflicts) delete local.notionConflicts[root]
         if (local.notionErrors) delete local.notionErrors[root]
+    }
+    const applyClassification = (s: LocalState, t: LocalThought, proposal: ClassificationProposal, mode: 'all' | 'project' | 'automatic' = 'all') => {
+        const retryError = mode === 'automatic' ? t.errorMessage : null
+        const pending = t.classificationProposal!
+        if (pending.project && !t.projectLocked) {
+            const candidate = namedSuggestion(proposal.project)
+            if (!candidate) throw new Error('Укажи название проекта')
+            let project = s.projects.find((p) => !p.deleted && normalizedName(p.name) === normalizedName(candidate.name))
+            if (!project) {
+                project = { ...candidate, id: id(), color: '#5B4FE0', createdAt: stamp(), updatedAt: stamp(), revision: 1, deleted: false, notion: {} }
+                s.projects.push(project)
+            }
+            t.projectId = project.id
+            t.projectLocked = mode !== 'automatic'
+        }
+        if (mode !== 'project' && pending.category && !t.categoryLocked) {
+            const candidate = namedSuggestion(proposal.category)
+            if (!candidate) throw new Error('Укажи название типа')
+            let category = allTypes(s.customCategories).find((c) => normalizedName(c.name) === normalizedName(candidate.name))
+            if (!category) {
+                category = { ...candidate, id: `custom:${id()}` }
+                s.customCategories.push(category)
+            }
+            t.category = category.id
+            t.categoryDefinition = category
+            t.categoryLocked = mode !== 'automatic'
+        }
+        t.classificationProposal = mode === 'project' && pending.category && !t.categoryLocked
+            ? { ...pending, project: undefined, unresolved: { project: false, category: true } }
+            : null
+        t.status = t.projectId && !t.classificationProposal && !(pending.unresolved?.category && !pending.category)
+            ? 'ready' : 'needs_review'
+        t.aiPending = Boolean(t.aiFeedback)
+        t.errorMessage = null
+        t.attempts = t.retryAt = 0
+        if (retryError) {
+            t.errorMessage = retryError
+            t.aiPending = true
+            t.status = 'needs_review'
+        }
     }
     const repository = {
         initialize,
@@ -222,6 +275,18 @@ export function createLocalRepository(
             mutate((s) => {
                 s.draft = draft
             }),
+        notify: (message: string, kind: AppNotification['kind'] = 'info', thoughtId?: string, source?: string) =>
+            mutate((s) => {
+                if (!message.trim()) return
+                if (source && s.notifications.some((item) => item.source === source)) return
+                const last = s.notifications.at(-1)
+                if (last?.message === message && last.kind === kind && last.thoughtId === thoughtId &&
+                    now() - Date.parse(last.createdAt) < 60000) return
+                s.notifications.push({ id: id(), message: historyError(message), kind, thoughtId, source, createdAt: stamp(), read: false })
+                s.notifications = s.notifications.slice(-100)
+            }),
+        readNotifications: () => mutate((s) => { s.notifications.forEach((item) => { item.read = true }) }),
+        clearNotifications: () => mutate((s) => { s.notifications = [] }),
         preferences: (patch: Partial<Preferences>) =>
             mutate((s) => {
                 Object.assign(s.preferences, patch)
@@ -391,38 +456,7 @@ export function createLocalRepository(
                 const t = findNote(s, noteId)
                 if (t.revision !== revision || !t.classificationProposal)
                     throw new Error('Мысль изменилась. Открой актуальное предложение ещё раз.')
-                const pending = t.classificationProposal
-                if (pending.project && !t.projectLocked) {
-                    const candidate = namedSuggestion(proposal.project)
-                    if (!candidate) throw new Error('Укажи название проекта')
-                    let project = s.projects.find((p) => !p.deleted && normalizedName(p.name) === normalizedName(candidate.name))
-                    if (!project) {
-                        project = { ...candidate, id: id(), color: '#5B4FE0', createdAt: stamp(), updatedAt: stamp(), revision: 1, deleted: false, notion: {} }
-                        s.projects.push(project)
-                    }
-                    t.projectId = project.id
-                    t.projectLocked = true
-                }
-                if (!projectOnly && pending.category && !t.categoryLocked) {
-                    const candidate = namedSuggestion(proposal.category)
-                    if (!candidate) throw new Error('Укажи название типа')
-                    let category = allTypes(s.customCategories).find((c) => normalizedName(c.name) === normalizedName(candidate.name))
-                    if (!category) {
-                        category = { ...candidate, id: `custom:${id()}` }
-                        s.customCategories.push(category)
-                    }
-                    t.category = category.id
-                    t.categoryDefinition = category
-                    t.categoryLocked = true
-                }
-                t.classificationProposal = projectOnly && pending.category && !t.categoryLocked
-                    ? { ...pending, project: undefined, unresolved: { project: false, category: true } }
-                    : null
-                t.status = t.projectId && !t.classificationProposal && !(pending.unresolved?.category && !pending.category)
-                    ? 'ready' : 'needs_review'
-                t.aiPending = Boolean(t.aiFeedback)
-                t.errorMessage = null
-                t.attempts = t.retryAt = 0
+                applyClassification(s, t, proposal, projectOnly ? 'project' : 'all')
                 touch(t)
                 return t
             }),
@@ -544,7 +578,7 @@ export function createLocalRepository(
                         let link = existing.notion[root]
                         if (!link) {
                             link = existing.notion[root] = {
-                                id: remote.id,
+                                id: remote.id, parentId: remote.notionParentId,
                                 revision: remote.notionVersion && remote.notionVersion === existing.syncVersion
                                     ? existing.revision
                                     : remote.localId ? (remote.localRevision ?? 0) : existing.revision,
@@ -553,11 +587,13 @@ export function createLocalRepository(
                         }
                         if (existing.deleted) continue
                         if (link.version === version) {
+                            link.id = remote.id
+                            link.parentId = remote.notionParentId
                             if (existing.notionConflicts) delete existing.notionConflicts[root]
                             continue
                         }
                         if (remote.notionVersion && remote.notionVersion === existing.syncVersion) {
-                            existing.notion[root] = { id: remote.id, revision: existing.revision, version }
+                            existing.notion[root] = { id: remote.id, parentId: remote.notionParentId, revision: existing.revision, version }
                             if (existing.notionConflicts) delete existing.notionConflicts[root]
                         } else if (!link.version && !remote.notionVersion && remote.localRevision === link.revision &&
                             (link.revision !== existing.revision || remote.updatedAt === existing.updatedAt)) {
@@ -579,7 +615,7 @@ export function createLocalRepository(
                         attempts: 0,
                         retryAt: 0,
                         notion:
-                            source === 'notion' ? { [root]: { id: remote.id, revision: 1, version: notionVersionOf(remote) } } : {}
+                            source === 'notion' ? { [root]: { id: remote.id, parentId: remote.notionParentId, revision: 1, version: notionVersionOf(remote) } } : {}
                     })
                 }
             }),
@@ -616,6 +652,16 @@ export function createLocalRepository(
                     }
                 for (const entry of [...state.thoughts]) {
                     let current = state.thoughts.find((t) => t.id === entry.id)!
+                    if (!current.deleted && current.classificationProposal && !state.preferences.confirmAIProposals) {
+                        await mutate((s) => {
+                            const t = findNote(s, entry.id)
+                            if (t.classificationProposal) {
+                                applyClassification(s, t, t.classificationProposal, 'automatic')
+                                touch(t)
+                            }
+                        })
+                        current = state.thoughts.find((t) => t.id === entry.id)!
+                    }
                     if (
                         !current.deleted &&
                         !(destination && current.notionConflicts?.[destination.root]) &&
@@ -679,6 +725,9 @@ export function createLocalRepository(
                                 t.aiPending = (Boolean(captured.aiFeedback) || !t.classificationProposal) &&
                                     (Boolean(result.errorMessage) || result.status === 'pending')
                                 if (!t.aiPending) delete t.aiFeedback
+                                if (!s.preferences.confirmAIProposals && t.classificationProposal && !captured.aiFeedback) {
+                                    applyClassification(s, t, t.classificationProposal, 'automatic')
+                                }
                                 t.attempts = t.aiPending ? t.attempts + 1 : 0
                                 t.retryAt = t.aiPending
                                     ? now() + Math.min(300000, 2000 * 2 ** t.attempts)
@@ -743,7 +792,7 @@ export function createLocalRepository(
                         await mutate((s) => {
                             const t = s.thoughts.find((t) => t.id === captured.id)!
                             t.notion[destination.root] = {
-                                id: remoteId,
+                                ...(typeof remoteId === 'string' ? { id: remoteId } : remoteId),
                                 revision: captured.revision,
                                 version: captured.syncVersion ?? `${captured.revision}:${captured.updatedAt}`
                             }
