@@ -27,6 +27,7 @@ jobs:
         env:
             EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
             EXPO_EAS_PROJECT_ID: ${{ vars.EXPO_EAS_PROJECT_ID || '5fd4e492-7922-4f9e-83e4-a6c9e8062dc2' }}
+            EXPO_PUBLIC_NOTION_OAUTH_URL: ${{ vars.NOTION_OAUTH_URL }}
             CI: '1'
         steps:
             - uses: actions/checkout@v4
@@ -64,5 +65,14 @@ jobs:
                   npm test
             - name: Check authenticated Expo account
               run: npx --yes eas-cli@latest whoami --non-interactive
+            - name: Set OAuth URL in the Expo preview environment
+              if: env.EXPO_PUBLIC_NOTION_OAUTH_URL != ''
+              run: >-
+                  npx --yes eas-cli@latest env:set
+                  --environment preview
+                  --name EXPO_PUBLIC_NOTION_OAUTH_URL
+                  --value "$EXPO_PUBLIC_NOTION_OAUTH_URL"
+                  --visibility plaintext
+                  --non-interactive
             - name: Publish preview Android update
               run: npx --yes eas-cli@latest update --channel preview --platform android --environment preview --message "Thoughts UI ${{ github.sha }}" --non-interactive

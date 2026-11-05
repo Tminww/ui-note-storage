@@ -3,9 +3,11 @@ import { Platform, Pressable, ScrollView } from 'react-native'
 import { Box, Text } from '../components/ui/surfaces'
 import { Action, Field, Icon, Info, Toggle, type IconName } from '../components/ui/app-controls'
 import { api, getApiUrl, saveApiUrl, type Settings } from './api'
-import { localRepository, syncSnapshot, retryLocalData, importServerData } from './localService'
-import { getNotionRoot, hasSecret, saveSecret, setNotionRoot } from './deviceConfig'
-import { verifyNotionConnection } from './notionStorage'
+import { localRepository, syncSnapshot, retryLocalData, importServerData, changeNotionConnection } from './localService'
+import { getManualNotionRoot, getNotionOAuth, getNotionRoot, hasSecret, readSecret, saveNotionOAuth, saveSecret, setNotionRoot } from './deviceConfig'
+import { parseNotionProjectPage, verifyNotionConnection } from './notionStorage'
+import { authorizeNotionStorage, notionOAuthService } from './notionOAuth'
+import { NotionPagePicker } from './NotionPagePicker'
 import { connectNotionMcp, notionMcpDisconnect, notionMcpIsConnected } from './notionMcp'
 import { accents } from './useAppearance'
 import type { Preferences } from './localCore'
@@ -40,13 +42,17 @@ export function SettingsScreen({
 }) {
     const [busy, setBusy] = useState(false)
     const [settings, setSettings] = useState<Settings | null>(null)
-    const [root, setRoot] = useState(getNotionRoot())
+    const [root, setRoot] = useState(getManualNotionRoot())
     const [notionToken, setNotionToken] = useState('')
     const [aiToken, setAiToken] = useState('')
     const [hasAI, setHasAI] = useState(false)
     const [hasNotion, setHasNotion] = useState(false)
     const [server, setServer] = useState(getApiUrl())
     const [mcp, setMcp] = useState(false)
+    const [manualNotion, setManualNotion] = useState(!notionOAuthService)
+    const [authorization, setAuthorization] = useState<Awaited<ReturnType<typeof authorizeNotionStorage>>>(null)
+    const [pickNotionPage, setPickNotionPage] = useState(false)
+    const oauth = getNotionOAuth()
     const sync = syncSnapshot()
     const pending = localRepository
         .snapshot()
@@ -57,13 +63,13 @@ export function SettingsScreen({
         void Promise.all([
             api.settings(),
             hasSecret('openrouter'),
-            hasSecret('notion'),
+            readSecret('notion'),
             notionMcpIsConnected()
         ])
             .then(([s, a, n, m]) => {
                 setSettings(s)
                 setHasAI(a)
-                setHasNotion(n)
+                setHasNotion(Boolean(n))
                 setMcp(m)
             })
             .catch((e) => onError(e.message))
@@ -79,6 +85,22 @@ export function SettingsScreen({
             setBusy(false)
         }
     }
+    const activateNotionPage = async (id: string, credentials: NonNullable<typeof authorization>) => {
+        const rootId = parseNotionProjectPage(id)
+        if (!rootId) throw new Error('Выбери страницу Notion')
+        const pageTitle = await verifyNotionConnection(rootId, credentials.accessToken)
+        await changeNotionConnection(() => saveNotionOAuth({ ...credentials, root: rootId, pageTitle }))
+        setAuthorization(null)
+        setPickNotionPage(false)
+        onNotice(`Подключено к Notion · ${pageTitle}`)
+    }
+    const startNotion = () => void run(async () => {
+        const tokens = await authorizeNotionStorage()
+        if (!tokens) return
+        setAuthorization(tokens)
+        setPickNotionPage(true)
+        if (tokens.templatePageId) await activateNotionPage(tokens.templatePageId, tokens)
+    })
     const preference = (patch: Partial<Preferences>) =>
         void localRepository.preferences(patch).catch((e) => onError(e.message))
     const row = (name: string, caption: string, icon: IconName, target: Section) => (
@@ -241,51 +263,92 @@ export function SettingsScreen({
                         ? `Notion настроен. ${pending} изменений ждут синхронизации.`
                         : 'Пока Notion не подключён, мысли хранятся только на телефоне.'}
                 </Info>
-                <Field
-                    label="1. Токен интеграции"
-                    placeholder={
-                        hasNotion
-                            ? 'Сохранён. Оставь пустым, чтобы не менять'
-                            : 'Вставь токен из Notion'
-                    }
-                    secureTextEntry
-                    autoCapitalize="none"
-                    value={notionToken}
-                    onChangeText={setNotionToken}
-                />
-                <Text className="text-sm leading-5 text-muted-foreground">
-                    Создай внутреннюю интеграцию в Notion и дай ей доступ к выбранной странице через
-                    «Подключения».
-                </Text>
-                <Field
-                    label="2. Страница для мыслей"
-                    placeholder="Ссылка или ID страницы"
-                    autoCapitalize="none"
-                    value={root}
-                    onChangeText={setRoot}
-                />
-                <Text className="text-sm font-semibold">3. Проверка и синхронизация</Text>
-                <Action
-                    disabled={busy || Platform.OS === 'web'}
-                    onPress={() =>
-                        void run(async () => {
-                            await setNotionRoot(root)
-                            if (notionToken.trim()) await saveSecret('notion', notionToken)
-                            setNotionToken('')
-                            setHasNotion(await hasSecret('notion'))
-                            await verifyNotionConnection()
-                            await retryLocalData()
-                            onNotice('Подключение проверено. Очередь синхронизируется с Notion.')
-                        })
-                    }
-                >
-                    Подключить и синхронизировать
-                </Action>
                 {Platform.OS === 'web' ? (
-                    <Text className="text-sm text-muted-foreground">
-                        Личные ключи Notion подключаются в установленном приложении Android/iOS.
-                    </Text>
-                ) : null}
+                    <Text className="text-sm text-muted-foreground">Подключение Notion доступно в приложении Android и iOS.</Text>
+                ) : pickNotionPage ? (
+                    <NotionPagePicker token={authorization?.accessToken} disabled={busy}
+                        onSelect={(page) => {
+                            const credentials = authorization || getNotionOAuth()
+                            if (credentials) void run(() => activateNotionPage(page.id, credentials))
+                        }}
+                        onCancel={() => {
+                            setAuthorization(null)
+                            setPickNotionPage(false)
+                        }}
+                    />
+                ) : (
+                    <>
+                        {oauth ? (
+                            <Box className="gap-2 rounded-2xl border border-border bg-card p-4">
+                                <Text className="text-sm text-muted-foreground">{oauth.workspaceName || 'Рабочее пространство Notion'}</Text>
+                                <Text className="text-base font-semibold">{oauth.pageTitle}</Text>
+                                <Action secondary disabled={busy} onPress={() => setPickNotionPage(true)}>Выбрать другую страницу</Action>
+                                {notionOAuthService ? <Action secondary disabled={busy} onPress={startNotion}>Подключить заново</Action> : null}
+                                <Action secondary disabled={busy} onPress={() => void run(async () => {
+                                    await changeNotionConnection(() => saveNotionOAuth(null))
+                                    onNotice('Вход в Notion отключён на этом устройстве')
+                                })}>Отключить вход через Notion</Action>
+                            </Box>
+                        ) : notionOAuthService ? (
+                            <>
+                                <Action disabled={busy || !sync.online} onPress={startNotion}>Подключить Notion</Action>
+                                <Text className="text-sm text-muted-foreground">
+                                    После выбора страницы в неё будут синхронизироваться мысли с телефона.
+                                </Text>
+                            </>
+                        ) : null}
+                        <Action secondary disabled={busy} onPress={() => setManualNotion(!manualNotion)}>
+                            {manualNotion ? 'Скрыть ручную настройку' : 'Подключить вручную'}
+                        </Action>
+                        {manualNotion ? <>
+                            <Field
+                                label="1. Токен интеграции"
+                                placeholder={
+                                    hasNotion
+                                        ? 'Сохранён. Оставь пустым, чтобы не менять'
+                                        : 'Вставь токен из Notion'
+                                }
+                                secureTextEntry
+                                autoCapitalize="none"
+                                value={notionToken}
+                                onChangeText={setNotionToken}
+                            />
+                            <Text className="text-sm leading-5 text-muted-foreground">
+                                Создай внутреннюю интеграцию в Notion и дай ей доступ к выбранной странице через
+                                «Подключения».
+                            </Text>
+                            <Field
+                                label="2. Страница для мыслей"
+                                placeholder="Ссылка или ID страницы"
+                                autoCapitalize="none"
+                                value={root}
+                                onChangeText={setRoot}
+                            />
+                            <Text className="text-sm font-semibold">3. Проверка и синхронизация</Text>
+                            <Action
+                                disabled={busy}
+                                onPress={() =>
+                                    void run(async () => {
+                                        const id = parseNotionProjectPage(root)
+                                        const token = notionToken.trim() || await readSecret('notion')
+                                        if (!id || !token) throw new Error('Укажи страницу и токен Notion')
+                                        await verifyNotionConnection(id, token)
+                                        await changeNotionConnection(async () => {
+                                            if (notionToken.trim()) await saveSecret('notion', token)
+                                            await setNotionRoot(id)
+                                            if (oauth) await saveNotionOAuth(null)
+                                        })
+                                        setNotionToken('')
+                                        setHasNotion(true)
+                                        onNotice('Подключение проверено. Очередь синхронизируется с Notion.')
+                                    })
+                                }
+                            >
+                                Подключить и синхронизировать
+                            </Action>
+                        </> : null}
+                    </>
+                )}
                 <Info>
                     Локальная копия останется на телефоне. При обрыве сети изменения дождутся
                     повторной отправки.
@@ -427,7 +490,7 @@ export function SettingsScreen({
                         : 'Этот APK не поддерживает обновления. Один раз установи новую сборку Thoughts с подключённым Expo.'}
                 </Info>
                 <Box className="gap-2 rounded-3xl border border-border bg-card p-4">
-                    <Text className="text-base font-semibold">Thoughts · интерфейс 0.3.5</Text>
+                    <Text className="text-base font-semibold">Thoughts · интерфейс 0.3.6</Text>
                     <Text className="text-sm">Дата выпуска установленного обновления: {updates.publishedAt ? new Date(updates.publishedAt).toLocaleString('ru-RU') : 'недоступна в режиме разработки'}</Text>
                     {updates.firstLaunchedAt ? <Text className="text-sm text-muted-foreground">Впервые запущено на этом устройстве: {new Date(updates.firstLaunchedAt).toLocaleString('ru-RU')}</Text> : null}
                     <Text className="text-sm text-muted-foreground">{updates.embedded ? 'Версия из APK' : 'Обновление Expo'}{updates.updateId ? ` · ${updates.updateId.slice(0, 8)}` : ''}</Text>

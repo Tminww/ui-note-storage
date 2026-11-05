@@ -1,0 +1,29 @@
+name: thoughts-notion-oauth
+services:
+  oauth:
+    image: ${THOUGHTS_OAUTH_IMAGE:?Set THOUGHTS_OAUTH_IMAGE to a published image tag or digest}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: oauth.env
+        format: raw
+      - path: proxy.env
+        format: raw
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: '4010'
+    ports:
+      - '127.0.0.1:4010:4010'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.50
+    pids_limit: 64
+    stop_grace_period: 25s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'
