@@ -65,6 +65,7 @@ function NoteSummary({ summary, onToggle, onConvert, disabled }: {
                 const task = checklistItem(line)
                 if (task) return (
                     <Pressable key={index} accessibilityRole="checkbox" accessibilityLabel={task.text}
+                        aria-checked={task.checked}
                         accessibilityState={{ checked: task.checked, disabled }} disabled={disabled}
                         onPress={() => onToggle(index)}
                         className="min-h-11 flex-row items-center gap-3 rounded-lg px-1 active:bg-muted">
@@ -353,6 +354,10 @@ function ThoughtsApp() {
         const showReviewActions = page === 'thoughts' && selected === 'review'
         const suggestedProject = t.classificationProposal?.project
         const canAcceptProject = suggestedProject || (t.projectId && !t.projectLocked)
+        const preview = (t.summary || t.rawText).split(/\r?\n/).map((line) => {
+            const item = checklistItem(line)
+            return item ? `${item.checked ? '☑' : '☐'} ${item.text}` : line
+        }).join('\n')
         const color = state.preferences.projectColors
             ? projects.find((p) => p.id === t.projectId)?.color
             : undefined
@@ -373,7 +378,7 @@ function ThoughtsApp() {
                     <Text className="text-base font-semibold leading-6" numberOfLines={2}>{t.title || t.rawText}</Text>
                     {t.summary || (t.title && t.title !== t.rawText) ? (
                         <Text className="text-sm leading-5 text-muted-foreground" numberOfLines={2}>
-                            {t.summary || t.rawText}
+                            {preview}
                         </Text>
                     ) : null}
                     <Box className="flex-row items-center justify-between gap-3">
