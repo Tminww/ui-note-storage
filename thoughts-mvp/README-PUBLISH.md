@@ -6,12 +6,13 @@
 
 | Workflow | Результат |
 | --- | --- |
+| `cleanup-merged-branch.yml` | Удаление ветки после merge PR, если её tip не изменился |
 | `thoughts-ci.yml` | TypeScript, lint, тесты API / мобильной логики, Expo web export |
 | `build-thoughts-apk.yml` | Подписанный APK и native smoke в Android-эмуляторе |
 | `publish-thoughts-eas-update.yml` | Обновление Android в Expo-канале `preview` |
 | `thoughts-oauth-container.yml` | Проверенный OAuth-образ в GHCR |
 
-Все workflows можно запустить вручную на `master` через Actions → Run workflow. OAuth-образ и OTA автоматически публикуются при изменении соответствующих путей; APK собирается на каждом push в `master`.
+Workflows сборки и публикации можно запустить вручную на `master` через Actions → Run workflow. OAuth-образ и OTA автоматически публикуются при изменении соответствующих путей; APK собирается на каждом push в `master`.
 
 ## APK и GitHub Release
 

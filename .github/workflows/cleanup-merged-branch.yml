@@ -1,0 +1,35 @@
+name: Delete merged working branch
+
+on:
+    pull_request:
+        types: [closed]
+
+permissions:
+    contents: write
+
+jobs:
+    delete-branch:
+        if: >-
+            github.event.pull_request.merged == true &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            github.event.pull_request.head.ref != 'master'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: master
+            - name: Delete branch only if its tip still matches the merged PR
+              env:
+                  BRANCH_NAME: ${{ github.event.pull_request.head.ref }}
+                  MERGED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+              shell: bash
+              run: |
+                  git check-ref-format "refs/heads/$BRANCH_NAME"
+                  CURRENT_SHA=$(git ls-remote origin "refs/heads/$BRANCH_NAME" | cut -f1)
+                  if [ -z "$CURRENT_SHA" ]; then
+                      echo 'Branch was already removed.'
+                  elif [ "$CURRENT_SHA" = "$MERGED_HEAD_SHA" ]; then
+                      git push origin ":refs/heads/$BRANCH_NAME"
+                  else
+                      echo 'Branch has new commits after this PR; preserving it.'
+                  fi
