@@ -341,6 +341,7 @@ test('toggle relocation reconciles a lost response and preserves additional user
     await assert.rejects(first.thought(note, 'p', old.id), /Response lost/)
     const snapshot = await f.api.getNotionSnapshot()
     assert.equal(snapshot.thoughts.length, 1)
+    assert.equal(f.rootBlocks.filter((b) => b.type === 'toggle').length, 0)
     const second = await f.api.createNotionSyncAdapter(snapshot)
     const moved = await second.thought(note, 'p', old.id)
     assert.notEqual(moved.id, old.id)

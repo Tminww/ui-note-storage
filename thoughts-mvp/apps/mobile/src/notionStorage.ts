@@ -303,6 +303,7 @@ function thoughtFrom(b: any, meta: Partial<Thought>): Thought {
         notionObject: b.type === 'toggle' ? 'toggle' : 'page',
         notionParentId: b.type === 'toggle' ? b.parent?.page_id : undefined,
         notionReplacesId: meta.notionReplacesId,
+        notionReplacesVersion: meta.notionReplacesVersion,
         rawText: meta.rawText || '',
         title: meta.title || title(b).slice(PREFIX_THOUGHT.length),
         summary: meta.summary || '',
@@ -395,6 +396,20 @@ export async function getNotionSnapshot(knownThoughtIds: string[] = []) {
     ]))
         .flat()
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    // A lost append acknowledgement can leave both entries committed. Complete the
+    // pending relocation before importing its replacement as already synchronized.
+    for (const replacement of thoughts.filter((t) => t.notionReplacesId)) {
+        const previous = thoughts.find((t) => t.id === replacement.notionReplacesId && t.localId === replacement.localId)
+        if (!previous || previous.notionObject !== 'toggle') continue
+        if (replacement.notionReplacesVersion && notionVersionOf(previous) !== replacement.notionReplacesVersion)
+            throw new Error('Исходная заметка изменилась во время переноса. Проверь обе записи в Notion.')
+        const blocks = await loadBlocks(previous.id)
+        const metadata = await readMetadata(blocks)
+        const owned = ownedTextBlocks(blocks, (metadata.current || metadata.legacy)?.value || {}).map((b) => b.id)
+        if (blocks.some((b) => !owned.includes(b.id) && !(b.type === 'toggle' && blockText(b) === META_LABEL)))
+            throw new Error('Перенос заметки не завершён: в исходной записи появились дополнительные блоки. Проверь обе записи в Notion.')
+        await notion(`/blocks/${previous.id}`, 'DELETE')
+    }
     const replaced = new Set(thoughts.map((t) => t.notionReplacesId).filter(Boolean))
     return { root: destinationRoot, projects, thoughts: thoughts.filter((t) => !replaced.has(t.id)), linkedErrors }
 }
@@ -630,6 +645,7 @@ export async function createNotionSyncAdapter(snapshot?: {
             // Read blocks for both page notes from older versions and current toggle notes.
             let object: any
             let replaced = thoughts.find((t) => t.id === remote)?.notionReplacesId
+            let replacedVersion = thoughts.find((t) => t.id === remote)?.notionReplacesVersion
             if (remote) {
                 object = await notion(`/blocks/${remote}`)
                 // Legacy child pages are also blocks; fetch page details for their title/parent.
@@ -657,6 +673,8 @@ export async function createNotionSyncAdapter(snapshot?: {
                             throw new Error('В заметке есть дополнительные блоки Notion. Перенеси её в нужную страницу в Notion, чтобы сохранить их.')
                         // Blocks cannot be moved through the API. Commit a replacement first.
                         replaced = remote
+                        const previous = await readThought(object, blocks)
+                        replacedVersion = previous ? notionVersionOf(previous) : undefined
                         remote = undefined
                     }
                 }
@@ -669,7 +687,7 @@ export async function createNotionSyncAdapter(snapshot?: {
                     children: [{ object: 'block', type: 'toggle', toggle: {
                         rich_text: rich(PREFIX_THOUGHT + local.title.slice(0, 90)),
                         children: [...content, metadataToggle(META_PREFIX + JSON.stringify({
-                            ...meta, rawText: local.rawText, notionReplacesId: replaced, _initialTextBlocks: content.length
+                            ...meta, rawText: local.rawText, notionReplacesId: replaced, notionReplacesVersion: replacedVersion, _initialTextBlocks: content.length
                         }))]
                     } }]
                 })
@@ -682,7 +700,7 @@ export async function createNotionSyncAdapter(snapshot?: {
                     toggle: { rich_text: rich(PREFIX_THOUGHT + local.title.slice(0, 90)) }
                 })
             } else await renamePage(remote!, PREFIX_THOUGHT + local.title)
-            await updateMetadata(remote!, { ...meta, notionReplacesId: replaced }, local.rawText, local.summary)
+            await updateMetadata(remote!, { ...meta, notionReplacesId: replaced, notionReplacesVersion: replacedVersion }, local.rawText, local.summary)
             if (replaced) await notion(`/blocks/${replaced}`, 'DELETE')
             return object.type === 'toggle' ? { id: remote!, parentId: target } : remote!
         },
