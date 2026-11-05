@@ -286,6 +286,9 @@ export function createLocalRepository(
                 s.notifications = s.notifications.slice(-100)
             }),
         readNotifications: () => mutate((s) => { s.notifications.forEach((item) => { item.read = true }) }),
+        removeNotification: (notificationId: string) => mutate((s) => {
+            s.notifications = s.notifications.filter((item) => item.id !== notificationId)
+        }),
         clearNotifications: () => mutate((s) => { s.notifications = [] }),
         preferences: (patch: Partial<Preferences>) =>
             mutate((s) => {

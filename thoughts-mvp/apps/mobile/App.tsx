@@ -126,6 +126,7 @@ function ThoughtsApp() {
     const [showSearch, setShowSearch] = useState(false)
     const [search, setSearch] = useState('')
     const [showNotifications, setShowNotifications] = useState(false)
+    const [notificationMenu, setNotificationMenu] = useState<string | null>(null)
     const unreadNotifications = state.notifications.filter((item) => !item.read).length
     const observedHistory = useRef<Set<string> | null>(null)
     const [error, setError] = useState('')
@@ -604,46 +605,49 @@ function ThoughtsApp() {
                         </Box>
                     )}
                 </ScrollView>
-                <Box className="mx-4 mb-3 shrink-0 gap-3 rounded-3xl border border-border bg-card p-4">
-                    <Text className="text-sm font-semibold">Записать мысль</Text>
-                    <TextInput
-                        ref={input}
-                        accessibilityLabel="Новая мысль"
-                        placeholder="Напиши, что хочешь сохранить…"
-                        value={draft}
-                        onChangeText={persistDraft}
-                        multiline
-                        maxLength={10000}
-                        editable={!busy}
-                        className="max-h-32 min-h-20 rounded-2xl border border-input bg-background px-3 py-3 text-base text-foreground placeholder:text-muted-foreground focus:border-primary"
-                    />
-                    <Box className="flex-row items-center justify-between gap-3">
-                        <Pressable
-                            accessibilityRole="button"
-                            onPress={() => {
-                                Keyboard.dismiss()
-                                setPicker(true)
-                            }}
-                            className="min-h-11 max-w-[80%] flex-row items-center gap-2 rounded-full bg-secondary px-3"
-                        >
-                            <Text className="shrink text-sm font-medium" numberOfLines={1}>
-                                Проект: {draftProject ? projectName(draftProject) : 'Авто'}
-                            </Text>
-                            <Icon name="chevron-down" size={16} />
-                        </Pressable>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={hasDraft ? 'Сохранить мысль' : 'Начать диктовку'}
-                            disabled={busy || voice.nativeBusy}
-                            onPress={hasDraft ? () => void saveThought() : startVoice}
-                            className={`h-12 w-12 items-center justify-center rounded-full bg-primary ${busy || voice.nativeBusy ? 'opacity-50' : ''}`}
-                        >
-                            <Icon
-                                name={hasDraft ? 'arrow-up' : 'mic-outline'}
-                                tone="text-primary-foreground"
-                            />
-                        </Pressable>
+                <Box className="shrink-0 gap-1 bg-card px-4 pb-2 pt-3">
+                    <Box className="flex-row items-end rounded-3xl border border-input bg-background p-1">
+                        <TextInput
+                            ref={input}
+                            accessibilityLabel="Новая мысль"
+                            placeholder="Напишите мысль…"
+                            value={draft}
+                            onChangeText={persistDraft}
+                            multiline
+                            numberOfLines={hasDraft ? 3 : 1}
+                            maxLength={10000}
+                            editable={!busy}
+                            className="max-h-32 min-h-11 min-w-0 flex-1 resize-none px-3 py-3 text-base outline-none text-foreground placeholder:text-muted-foreground"
+                        />
+                        {!hasDraft ? (
+                            <Pressable accessibilityRole="button" accessibilityLabel="Начать диктовку"
+                                disabled={busy || voice.nativeBusy} onPress={startVoice}
+                                className={`h-11 w-11 items-center justify-center rounded-full ${busy || voice.nativeBusy ? 'opacity-50' : ''}`}>
+                                <Icon name="mic-outline" tone="text-muted-foreground" />
+                            </Pressable>
+                        ) : null}
                     </Box>
+                    {hasDraft ? (
+                        <Box className="flex-row items-center justify-between gap-3">
+                            <Pressable accessibilityRole="button" accessibilityLabel="Выбрать проект для мысли"
+                                onPress={() => {
+                                    Keyboard.dismiss()
+                                    setPicker(true)
+                                }}
+                                className="min-h-11 min-w-0 max-w-[80%] shrink flex-row items-center gap-2 px-2">
+                                <Icon name="folder-outline" size={16} tone="text-muted-foreground" />
+                                <Text className="shrink text-sm text-muted-foreground" numberOfLines={1}>
+                                    {draftProject ? projectName(draftProject) : 'Выбрать проект'}
+                                </Text>
+                                <Icon name="chevron-down" size={14} tone="text-muted-foreground" />
+                            </Pressable>
+                            <Pressable accessibilityRole="button" accessibilityLabel="Сохранить мысль"
+                                disabled={busy || voice.nativeBusy} onPress={() => void saveThought()}
+                                className={`h-11 w-11 items-center justify-center rounded-full bg-primary ${busy || voice.nativeBusy ? 'opacity-50' : ''}`}>
+                                <Icon name="arrow-up" tone="text-primary-foreground" />
+                            </Pressable>
+                        </Box>
+                    ) : null}
                 </Box>
             </>
         )
@@ -826,8 +830,9 @@ function ThoughtsApp() {
                     </Box>
                     <Pressable accessibilityRole="button" accessibilityLabel={`Уведомления, ${unreadNotifications} непрочитанных`}
                         className="h-12 w-12 items-center justify-center" onPress={() => {
+                            setNotificationMenu(null)
                             setShowNotifications(true)
-                            void localRepository.readNotifications()
+                            void localRepository.readNotifications().catch((e) => setError(e.message))
                         }}>
                         <Icon name="notifications-outline" tone="text-foreground" />
                         {unreadNotifications ? <Box className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" /> : null}
@@ -882,7 +887,7 @@ function ThoughtsApp() {
                     />
                 )}
                 {!keyboardOpen && (page !== 'settings' || section === 'home') ? (
-                    <SafeAreaView edges={['bottom']} className="border-t border-border bg-card">
+                    <SafeAreaView edges={['bottom']} className="bg-card">
                         <Box className="flex-row">
                             {(
                                 [
@@ -922,26 +927,48 @@ function ThoughtsApp() {
                     </SafeAreaView>
                 ) : null}
             </KeyboardAvoidingView>
-            <Sheet visible={showNotifications} title="Уведомления" onClose={() => setShowNotifications(false)}>
+            <Sheet visible={showNotifications} title="Уведомления" onClose={() => { setNotificationMenu(null); setShowNotifications(false) }}>
                 {!state.notifications.length ? <Text className="text-muted-foreground">Здесь появятся результаты обработки и подключения.</Text> : null}
                 {[...state.notifications].reverse().map((item) => (
                     <Box key={item.id} className="gap-2 border-b border-border pb-3">
-                        <Text selectable className={item.kind === 'error' ? 'text-destructive' : ''}>{item.message}</Text>
-                        <Text className="text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleString('ru-RU')}</Text>
-                        {item.thoughtId && thoughts.some((note) => note.id === item.thoughtId) ? (
-                            <Action secondary onPress={() => {
-                                setShowNotifications(false)
-                                setEditing({ ...thoughts.find((note) => note.id === item.thoughtId)! })
-                                setNoteMode('read')
-                                setNoteMenu(false)
-                            }}>Открыть мысль</Action>
-                        ) : null}
-                        {item.thoughtId && item.thoughtId === undoId ? (
-                            <Action secondary disabled={busy} onPress={() => void run(async () => {
-                                await api.deleteThought(item.thoughtId!)
-                                setUndoId(null)
-                                setNotice('Сохранение отменено')
-                            })}>Отменить сохранение</Action>
+                        <Box className="flex-row items-start gap-2">
+                            <Box className="min-w-0 flex-1 gap-1">
+                                <Text selectable className={item.kind === 'error' ? 'text-destructive' : ''}>{item.message}</Text>
+                                <Text className="text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleString('ru-RU')}</Text>
+                            </Box>
+                            <Pressable accessibilityRole="button" accessibilityLabel={`Действия с уведомлением: ${item.message}`}
+                                accessibilityState={{ expanded: notificationMenu === item.id }}
+                                onPress={() => setNotificationMenu(notificationMenu === item.id ? null : item.id)}
+                                className="h-11 w-11 items-center justify-center rounded-full">
+                                <Icon name="ellipsis-horizontal" size={20} tone="text-muted-foreground" />
+                            </Pressable>
+                        </Box>
+                        {notificationMenu === item.id ? (
+                            <Box className="self-end rounded-2xl border border-border bg-background py-1">
+                                {item.thoughtId && thoughts.some((note) => note.id === item.thoughtId) ? (
+                                    <Pressable accessibilityRole="button" className="min-h-11 justify-center px-4" onPress={() => {
+                                        setNotificationMenu(null)
+                                        setShowNotifications(false)
+                                        setEditing({ ...thoughts.find((note) => note.id === item.thoughtId)! })
+                                        setNoteMode('read')
+                                        setNoteMenu(false)
+                                    }}><Text>Открыть мысль</Text></Pressable>
+                                ) : null}
+                                {item.thoughtId && item.thoughtId === undoId ? (
+                                    <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center px-4"
+                                        onPress={() => void run(async () => {
+                                            await api.deleteThought(item.thoughtId!)
+                                            setNotificationMenu(null)
+                                            setUndoId(null)
+                                            setNotice('Сохранение отменено')
+                                        })}><Text className="text-destructive">Отменить сохранение</Text></Pressable>
+                                ) : null}
+                                <Pressable accessibilityRole="button" className="min-h-11 justify-center px-4"
+                                    onPress={() => void run(async () => {
+                                        await localRepository.removeNotification(item.id)
+                                        setNotificationMenu(null)
+                                    })}><Text className="text-muted-foreground">Удалить уведомление</Text></Pressable>
+                            </Box>
                         ) : null}
                     </Box>
                 ))}
