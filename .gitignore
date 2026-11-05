@@ -173,3 +173,6 @@ dist
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Runtime credentials for the Thoughts OAuth container
+thoughts-mvp/deploy/notion-oauth/oauth.env
