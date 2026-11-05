@@ -23,9 +23,7 @@ export function useVoiceInput(onText: (nextText: string) => void, onDeviceOnly =
                 options = {
                     lang: 'ru-RU',
                     interimResults: true,
-                    // Use the standard Android microphone path across vendors and
-                    // OS versions; restart after each phrase's native end callback.
-                    continuous: Platform.OS !== 'android',
+                    continuous: Platform.OS !== 'android' || Number(Platform.Version) >= 33,
                     maxAlternatives: 1,
                     // Android punctuation is reliably supported only on-device.
                     addsPunctuation: Platform.OS === 'ios' || deviceOnly,
