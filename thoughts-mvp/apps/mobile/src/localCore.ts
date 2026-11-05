@@ -9,6 +9,7 @@ export type Preferences = {
     voiceOnDevice: boolean
     voiceReview: boolean
     haptics: boolean
+    confirmAIProposals: boolean
 }
 export type RemoteLink = { id: string; revision: number; version?: string }
 export type LocalProject = Project & {
@@ -108,7 +109,8 @@ const initial = (): LocalState => ({
         projectColors: true,
         voiceOnDevice: false,
         voiceReview: true,
-        haptics: true
+        haptics: true,
+        confirmAIProposals: false
     }
 })
 
@@ -198,6 +200,46 @@ export function createLocalRepository(
         local.notion[root] = { id: remote.id, revision: local.revision, version: notionVersionOf(remote) }
         if (local.notionConflicts) delete local.notionConflicts[root]
         if (local.notionErrors) delete local.notionErrors[root]
+    }
+    const applyClassification = (s: LocalState, t: LocalThought, proposal: ClassificationProposal, mode: 'all' | 'project' | 'automatic' = 'all') => {
+        const retryError = mode === 'automatic' ? t.errorMessage : null
+        const pending = t.classificationProposal!
+        if (pending.project && !t.projectLocked) {
+            const candidate = namedSuggestion(proposal.project)
+            if (!candidate) throw new Error('Укажи название проекта')
+            let project = s.projects.find((p) => !p.deleted && normalizedName(p.name) === normalizedName(candidate.name))
+            if (!project) {
+                project = { ...candidate, id: id(), color: '#5B4FE0', createdAt: stamp(), updatedAt: stamp(), revision: 1, deleted: false, notion: {} }
+                s.projects.push(project)
+            }
+            t.projectId = project.id
+            t.projectLocked = mode !== 'automatic'
+        }
+        if (mode !== 'project' && pending.category && !t.categoryLocked) {
+            const candidate = namedSuggestion(proposal.category)
+            if (!candidate) throw new Error('Укажи название типа')
+            let category = allTypes(s.customCategories).find((c) => normalizedName(c.name) === normalizedName(candidate.name))
+            if (!category) {
+                category = { ...candidate, id: `custom:${id()}` }
+                s.customCategories.push(category)
+            }
+            t.category = category.id
+            t.categoryDefinition = category
+            t.categoryLocked = mode !== 'automatic'
+        }
+        t.classificationProposal = mode === 'project' && pending.category && !t.categoryLocked
+            ? { ...pending, project: undefined, unresolved: { project: false, category: true } }
+            : null
+        t.status = t.projectId && !t.classificationProposal && !(pending.unresolved?.category && !pending.category)
+            ? 'ready' : 'needs_review'
+        t.aiPending = Boolean(t.aiFeedback)
+        t.errorMessage = null
+        t.attempts = t.retryAt = 0
+        if (retryError) {
+            t.errorMessage = retryError
+            t.aiPending = true
+            t.status = 'needs_review'
+        }
     }
     const repository = {
         initialize,
@@ -391,38 +433,7 @@ export function createLocalRepository(
                 const t = findNote(s, noteId)
                 if (t.revision !== revision || !t.classificationProposal)
                     throw new Error('Мысль изменилась. Открой актуальное предложение ещё раз.')
-                const pending = t.classificationProposal
-                if (pending.project && !t.projectLocked) {
-                    const candidate = namedSuggestion(proposal.project)
-                    if (!candidate) throw new Error('Укажи название проекта')
-                    let project = s.projects.find((p) => !p.deleted && normalizedName(p.name) === normalizedName(candidate.name))
-                    if (!project) {
-                        project = { ...candidate, id: id(), color: '#5B4FE0', createdAt: stamp(), updatedAt: stamp(), revision: 1, deleted: false, notion: {} }
-                        s.projects.push(project)
-                    }
-                    t.projectId = project.id
-                    t.projectLocked = true
-                }
-                if (!projectOnly && pending.category && !t.categoryLocked) {
-                    const candidate = namedSuggestion(proposal.category)
-                    if (!candidate) throw new Error('Укажи название типа')
-                    let category = allTypes(s.customCategories).find((c) => normalizedName(c.name) === normalizedName(candidate.name))
-                    if (!category) {
-                        category = { ...candidate, id: `custom:${id()}` }
-                        s.customCategories.push(category)
-                    }
-                    t.category = category.id
-                    t.categoryDefinition = category
-                    t.categoryLocked = true
-                }
-                t.classificationProposal = projectOnly && pending.category && !t.categoryLocked
-                    ? { ...pending, project: undefined, unresolved: { project: false, category: true } }
-                    : null
-                t.status = t.projectId && !t.classificationProposal && !(pending.unresolved?.category && !pending.category)
-                    ? 'ready' : 'needs_review'
-                t.aiPending = Boolean(t.aiFeedback)
-                t.errorMessage = null
-                t.attempts = t.retryAt = 0
+                applyClassification(s, t, proposal, projectOnly ? 'project' : 'all')
                 touch(t)
                 return t
             }),
@@ -616,6 +627,16 @@ export function createLocalRepository(
                     }
                 for (const entry of [...state.thoughts]) {
                     let current = state.thoughts.find((t) => t.id === entry.id)!
+                    if (!current.deleted && current.classificationProposal && !state.preferences.confirmAIProposals) {
+                        await mutate((s) => {
+                            const t = findNote(s, entry.id)
+                            if (t.classificationProposal) {
+                                applyClassification(s, t, t.classificationProposal, 'automatic')
+                                touch(t)
+                            }
+                        })
+                        current = state.thoughts.find((t) => t.id === entry.id)!
+                    }
                     if (
                         !current.deleted &&
                         !(destination && current.notionConflicts?.[destination.root]) &&
@@ -679,6 +700,9 @@ export function createLocalRepository(
                                 t.aiPending = (Boolean(captured.aiFeedback) || !t.classificationProposal) &&
                                     (Boolean(result.errorMessage) || result.status === 'pending')
                                 if (!t.aiPending) delete t.aiFeedback
+                                if (!s.preferences.confirmAIProposals && t.classificationProposal && !captured.aiFeedback) {
+                                    applyClassification(s, t, t.classificationProposal, 'automatic')
+                                }
                                 t.attempts = t.aiPending ? t.attempts + 1 : 0
                                 t.retryAt = t.aiPending
                                     ? now() + Math.min(300000, 2000 * 2 ** t.attempts)
