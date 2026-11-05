@@ -19,7 +19,7 @@ import { SafeAreaView } from './components/ui/safe-area'
 import * as Haptics from 'expo-haptics'
 import * as Clipboard from 'expo-clipboard'
 import { Box, Text, Heading } from './components/ui/surfaces'
-import { Action, Field, Icon, Info, Sheet, confirmDelete } from './components/ui/app-controls'
+import { Action, Field, Icon, Info, Sheet, confirmDelete, type IconName } from './components/ui/app-controls'
 import { api, loadApiUrl, type Thought, type Project } from './src/api'
 import {
     localRepository,
@@ -41,6 +41,25 @@ import { syncLocalData } from './src/localService'
 type Page = 'thoughts' | 'projects' | 'ai' | 'settings'
 const clock = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+
+function NoteSummary({ summary }: { summary: string }) {
+    return (
+        <Box className="gap-2">
+            {summary.split(/\r?\n/).filter((line) => line.trim()).map((line, index) => {
+                const item = line.trim().match(/^([-*•]|\d+[.)])\s+(.+)$/)
+                if (!item) return <Text key={index} selectable className="text-base leading-6">{line}</Text>
+                return (
+                    <Box key={index} className="flex-row gap-2 pl-1">
+                        <Text className="text-base leading-6 text-muted-foreground">
+                            {/^\d/.test(item[1]) ? item[1] : '•'}
+                        </Text>
+                        <Text selectable className="flex-1 text-base leading-6">{item[2]}</Text>
+                    </Box>
+                )
+            })}
+        </Box>
+    )
+}
 export default function App() {
     return (
         <SafeAreaProvider>
@@ -76,8 +95,12 @@ function ThoughtsApp() {
     const linkedProjectPage = savedProject?.notionPageRoot === getNotionRoot()
         ? savedProject?.notionPageId : null
     const [editing, setEditing] = useState<LocalThought | null>(null)
+    const [noteMode, setNoteMode] = useState<'read' | 'edit' | 'revise'>('read')
+    const [noteMenu, setNoteMenu] = useState(false)
+    const [feedback, setFeedback] = useState('')
     const [copyNotice, setCopyNotice] = useState('')
-    const savedEditing = state.thoughts.find((t) => t.id === editing?.id)
+    const savedEditing = state.thoughts.find((t) => t.id === editing?.id && !t.deleted)
+    const proposalNote = editing?.revision === savedEditing?.revision ? editing : savedEditing
     const hasUnsavedEdits = Boolean(editing && savedEditing && (['title', 'rawText', 'summary', 'projectId', 'category'] as const).some((key) => editing[key] !== savedEditing[key]))
     const categories: Record<string, string> = Object.fromEntries(allTypes(state.customCategories).map((c) => [c.id, c.name]))
     const [historyId, setHistoryId] = useState<string | null>(null)
@@ -113,8 +136,9 @@ function ThoughtsApp() {
     }
     const editingNotion = savedEditing ? notionStatus(savedEditing) : null
     const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.id}` : null
-    const editingText = editing?.rawText.trim()
-        ? [editing.title.trim(), editing.rawText.trim()].filter(Boolean).join('\n\n') : ''
+    const editingText = savedEditing
+        ? [...new Set([savedEditing.title, savedEditing.summary, savedEditing.rawText].map((text) => text.trim()).filter(Boolean))].join('\n\n')
+        : ''
     const notionErrorCount = thoughts.filter((note) => notionStatus(note).error).length
     const lastProject = projects.find((project) => project.id === state.lastProjectId)
     const draftDestination = (projectId: string | null) => {
@@ -220,6 +244,31 @@ function ThoughtsApp() {
             await copyThought(editingText, 'Текст скопирован')
         }
     }
+    const closeNote = () => {
+        if (busy) return
+        setError('')
+        if (noteMenu) setNoteMenu(false)
+        else if (noteMode !== 'read') {
+            setNoteMode('read')
+            if (savedEditing) setEditing({ ...savedEditing })
+        } else setEditing(null)
+    }
+    const noteAction = (label: string, icon: IconName, action: () => void, destructive = false) => (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            disabled={busy}
+            className="min-h-11 flex-row items-center gap-3 rounded-lg px-3 active:bg-muted"
+            onPress={() => {
+                setNoteMenu(false)
+                setError('')
+                action()
+            }}
+        >
+            <Icon name={icon} size={19} tone={destructive ? 'text-destructive' : 'text-muted-foreground'} />
+            <Text className={destructive ? 'text-destructive' : ''}>{label}</Text>
+        </Pressable>
+    )
     const startVoice = () => {
         voiceAction.current++
         setVoiceScreen(true)
@@ -252,6 +301,8 @@ function ThoughtsApp() {
                 onPress={() => {
                     setError('')
                     setCopyNotice('')
+                    setNoteMode('read')
+                    setNoteMenu(false)
                     setEditing({ ...t })
                 }}
                 className="gap-4 rounded-3xl border border-border bg-card p-4"
@@ -954,170 +1005,203 @@ function ThoughtsApp() {
                     </Action>
                 ) : null}
             </Sheet>
-            <Sheet visible={editing !== null} title="Мысль" onClose={() => setEditing(null)}>
-                {error ? <Info warning>{error}</Info> : null}
-                {copyNotice ? <Info>{copyNotice}</Info> : null}
-                {editingNotion ? (
-                    <Box className="gap-2">
-                        <Text className="text-sm font-semibold">{editingNotion.label}</Text>
-                        {editingNotion.error ? (
-                            <>
-                                <Info warning>{editingNotion.error}</Info>
-                                <Action secondary disabled={busy || !sync.online || sync.syncing}
-                                    onPress={() => void run(syncLocalData)}>
-                                    Повторить синхронизацию
-                                </Action>
-                            </>
-                        ) : null}
-                        {editingNotionUrl ? (
-                            <>
-                                <Action secondary onPress={() => void run(() => Linking.openURL(editingNotionUrl))}>
-                                    Открыть заметку в Notion
-                                </Action>
-                                <Action secondary disabled={busy} onPress={() => void run(() =>
-                                    copyThought(editingNotionUrl, 'Ссылка Notion скопирована')
-                                )}>
-                                    Скопировать ссылку Notion
-                                </Action>
-                            </>
-                        ) : null}
-                    </Box>
+            <Sheet
+                visible={Boolean(savedEditing)}
+                title={noteMode === 'edit' ? 'Редактирование' : noteMode === 'revise' ? 'Правка с ИИ' : 'Мысль'}
+                onClose={closeNote}
+                headerActions={noteMode === 'read' ? (
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Действия с мыслью"
+                        accessibilityState={{ expanded: noteMenu }}
+                        disabled={busy}
+                        className="h-12 w-12 items-center justify-center rounded-full active:bg-muted"
+                        onPress={() => setNoteMenu(!noteMenu)}
+                    >
+                        <Icon name="ellipsis-horizontal" tone="text-foreground" />
+                    </Pressable>
                 ) : null}
-                {editing?.classificationProposal ? (
-                    <Box className="gap-4 rounded-3xl border border-primary bg-secondary p-4">
-                        <Text className="text-base font-semibold">Предложение DeepSeek</Text>
-                        {hasUnsavedEdits ? <Info warning>Сначала сохрани изменения мысли. После изменения текста или классификации прежнее предложение отменяется.</Info> : null}
-                        <Text className="text-sm">Jev не определил проект или тип уверенно. Ничего не создаётся без твоего подтверждения.</Text>
-                        <Text className="text-sm text-muted-foreground">{editing.classificationProposal.reason}</Text>
-                        {(['project', 'category'] as const).map((key) => {
-                            const item = editing.classificationProposal?.[key]
-                            return item ? <Box key={key} className="gap-2">
-                                <Field label={key === 'project' ? 'Предложен новый проект' : 'Предложен новый тип'} value={item.name} maxLength={80} onChangeText={(name) => setEditing({ ...editing, classificationProposal: { ...editing.classificationProposal!, [key]: { ...item, name } } })} />
-                                <Field label="Описание" value={item.description} maxLength={400} onChangeText={(description) => setEditing({ ...editing, classificationProposal: { ...editing.classificationProposal!, [key]: { ...item, description } } })} />
-                            </Box> : null
+            >
+                {noteMenu && savedEditing ? (
+                    <Box className="w-full max-w-xs self-end rounded-2xl border border-border bg-card p-1">
+                        {noteAction('Редактировать', 'create-outline', () => {
+                            setEditing({ ...savedEditing })
+                            setCopyNotice('')
+                            setNoteMode('edit')
                         })}
-                        <Action disabled={busy || hasUnsavedEdits} onPress={() => void run(async () => {
-                            await localRepository.confirmClassification(editing.id, editing.revision, editing.classificationProposal!)
-                            void syncLocalData()
-                            setEditing(null)
-                            setNotice('Предложение подтверждено и сохранено на телефоне')
-                        })}>Подтвердить создание и применить</Action>
-                        <Action secondary disabled={busy} onPress={() => void run(async () => {
-                            await localRepository.dismissClassification(editing.id, editing.revision)
-                            setEditing(null)
-                            setNotice('Предложение отклонено. Можно выбрать проект и тип вручную.')
-                        })}>Отклонить предложение</Action>
+                        {noteAction('Поделиться мыслью', 'share-outline', () => void run(shareThought))}
+                        {noteAction('Скопировать текст', 'copy-outline', () => void run(() =>
+                            copyThought(editingText, 'Текст скопирован')
+                        ))}
+                        {editingNotionUrl ? <>
+                            {noteAction('Открыть в Notion', 'open-outline', () => void run(() => Linking.openURL(editingNotionUrl)))}
+                            {noteAction('Скопировать ссылку Notion', 'link-outline', () => void run(() =>
+                                copyThought(editingNotionUrl, 'Ссылка Notion скопирована')
+                            ))}
+                        </> : null}
+                        {noteAction('Обработать ИИ ещё раз', 'refresh-outline', () => {
+                            setFeedback(savedEditing.aiFeedback || '')
+                            setCopyNotice('')
+                            setNoteMode('revise')
+                        })}
+                        <Box className="my-1 border-t border-border" />
+                        {noteAction('Удалить мысль', 'trash-outline', () => confirmDelete('Удалить мысль?', () =>
+                            void run(async () => {
+                                await api.deleteThought(savedEditing.id)
+                                setEditing(null)
+                            })
+                        ), true)}
                     </Box>
                 ) : null}
-                <Box className="gap-2">
-                    <Action secondary disabled={busy || !editingText} onPress={() => void run(shareThought)}>
-                        Поделиться мыслью
-                    </Action>
-                    <Action secondary disabled={busy || !editingText} onPress={() => void run(() =>
-                        copyThought(editingText, 'Текст скопирован')
-                    )}>
-                        Скопировать текст
-                    </Action>
-                </Box>
-                <Field
-                    label="Название"
-                    value={editing?.title || ''}
-                    maxLength={140}
-                    onChangeText={(v) => setEditing(editing ? { ...editing, title: v } : null)}
-                />
-                <Field
-                    label="Исходный текст"
-                    multiline
-                    value={editing?.rawText || ''}
-                    maxLength={10000}
-                    onChangeText={(v) => setEditing(editing ? { ...editing, rawText: v } : null)}
-                />
-                <Field
-                    label="Резюме"
-                    multiline
-                    value={editing?.summary || ''}
-                    maxLength={800}
-                    onChangeText={(v) => setEditing(editing ? { ...editing, summary: v } : null)}
-                />
-                <Text className="text-sm font-semibold">Проект</Text>
-                <Box className="flex-row flex-wrap gap-2">
-                    {[{ id: null, name: 'Входящие' }, ...projects].map((p) => (
-                        <Pressable
-                            key={p.id || 'inbox'}
-                            onPress={() =>
-                                setEditing(editing ? { ...editing, projectId: p.id } : null)
-                            }
-                            className={`min-h-12 justify-center rounded-full border px-4 ${editing?.projectId === p.id ? 'border-primary bg-secondary' : 'border-border'}`}
-                        >
-                            <Text className="text-sm">{p.name}</Text>
-                        </Pressable>
-                    ))}
-                </Box>
-                <Text className="text-sm font-semibold">Категория</Text>
-                <Box className="flex-row flex-wrap gap-2">
-                    {Object.entries(categories).map(([id, name]) => (
-                        <Pressable
-                            key={id}
-                            onPress={() =>
-                                setEditing(
-                                    editing
-                                        ? { ...editing, category: id as Thought['category'] }
-                                        : null
-                                )
-                            }
-                            className={`min-h-12 justify-center rounded-full border px-4 ${editing?.category === id ? 'border-primary bg-secondary' : 'border-border'}`}
-                        >
-                            <Text className="text-sm">{name}</Text>
-                        </Pressable>
-                    ))}
-                </Box>
-                <Action
-                    disabled={busy || !editing?.rawText.trim()}
-                    onPress={() =>
-                        void run(async () => {
-                            if (!editing) return
-                            await api.updateThought(editing.id, {
-                                title: editing.title,
-                                rawText: editing.rawText,
-                                summary: editing.summary,
-                                projectId: editing.projectId,
-                                category: editing.category,
-                                status: 'ready'
-                            })
-                            setEditing(null)
-                        })
-                    }
-                >
-                    Сохранить изменения
-                </Action>
-                <Action
-                    secondary
-                    onPress={() =>
-                        void run(async () => {
-                            if (editing) await api.processThought(editing.id)
-                            setEditing(null)
-                            setUndoId(null)
-                            setNotice('Мысль добавлена в очередь AI')
-                        })
-                    }
-                >
-                    Обработать AI ещё раз
-                </Action>
-                <Action
-                    secondary
-                    onPress={() =>
-                        confirmDelete(
-                            'Удалить мысль?',
-                            () =>
-                                void run(async () => {
-                                    if (editing) await api.deleteThought(editing.id)
-                                    setEditing(null)
+                {error ? <Info warning>{error}</Info> : null}
+                {copyNotice && noteMode === 'read' ? <Text accessibilityLiveRegion="polite" className="text-sm text-primary">{copyNotice}</Text> : null}
+                {noteMode === 'read' && savedEditing ? <>
+                    <Box className="gap-2">
+                        <Text className="text-sm text-muted-foreground">{projectName(savedEditing.projectId)} · {categories[savedEditing.category] || 'Заметка'}</Text>
+                        <Heading selectable className="text-2xl">
+                            {savedEditing.title || 'Без названия'}
+                        </Heading>
+                    </Box>
+                    {savedEditing.summary ? <NoteSummary summary={savedEditing.summary} /> : null}
+                    <Box className="gap-2">
+                        <Text className="text-sm font-semibold text-muted-foreground">Исходный текст</Text>
+                        <Text selectable className="text-base leading-6">{savedEditing.rawText}</Text>
+                    </Box>
+                    {savedEditing.tags.length ? (
+                        <Text className="text-sm text-muted-foreground">{savedEditing.tags.join(' · ')}</Text>
+                    ) : null}
+                    <Box className="gap-2 border-t border-border pt-3">
+                        <Text className="text-xs text-muted-foreground">
+                            {editingNotion?.label}
+                            {savedEditing.aiPending ? (savedEditing.aiFeedback ? ' · Правка ИИ в очереди' : ' · В очереди ИИ') : ''}
+                        </Text>
+                        {savedEditing.aiFeedback && savedEditing.errorMessage ? <Info warning>{savedEditing.errorMessage}</Info> : null}
+                        {editingNotion?.error ? <>
+                            <Info warning>{editingNotion.error}</Info>
+                            <Action secondary disabled={busy || !sync.online || sync.syncing}
+                                onPress={() => void run(syncLocalData)}>
+                                Повторить синхронизацию
+                            </Action>
+                        </> : null}
+                    </Box>
+                    {proposalNote?.classificationProposal ? (
+                        <Box className="gap-4 rounded-3xl border border-primary bg-secondary p-4">
+                            <Text className="text-base font-semibold">Предложение DeepSeek</Text>
+                            <Text className="text-sm">Jev не определил проект или тип уверенно. Ничего не создаётся без твоего подтверждения.</Text>
+                            <Text className="text-sm text-muted-foreground">{proposalNote.classificationProposal.reason}</Text>
+                            {(['project', 'category'] as const).map((key) => {
+                                const item = proposalNote.classificationProposal?.[key]
+                                return item ? <Box key={key} className="gap-2">
+                                    <Field label={key === 'project' ? 'Предложен новый проект' : 'Предложен новый тип'} value={item.name} maxLength={80} onChangeText={(name) => setEditing({ ...proposalNote, classificationProposal: { ...proposalNote.classificationProposal!, [key]: { ...item, name } } })} />
+                                    <Field label="Описание" value={item.description} maxLength={400} onChangeText={(description) => setEditing({ ...proposalNote, classificationProposal: { ...proposalNote.classificationProposal!, [key]: { ...item, description } } })} />
+                                </Box> : null
+                            })}
+                            <Action disabled={busy} onPress={() => void run(async () => {
+                                await localRepository.confirmClassification(proposalNote.id, proposalNote.revision, proposalNote.classificationProposal!)
+                                void syncLocalData()
+                                setEditing(null)
+                                setNotice('Предложение подтверждено и сохранено на телефоне')
+                            })}>Подтвердить создание и применить</Action>
+                            <Action secondary disabled={busy} onPress={() => void run(async () => {
+                                await localRepository.dismissClassification(proposalNote.id, proposalNote.revision)
+                                setEditing(null)
+                                setNotice('Предложение отклонено. Можно выбрать проект и тип вручную.')
+                            })}>Отклонить предложение</Action>
+                        </Box>
+                    ) : null}
+                </> : null}
+                {noteMode === 'edit' ? <>
+                    <Field
+                        label="Название"
+                        value={editing?.title || ''}
+                        maxLength={140}
+                        onChangeText={(v) => setEditing(editing ? { ...editing, title: v } : null)}
+                    />
+                    <Field
+                        label="Исходный текст"
+                        multiline
+                        value={editing?.rawText || ''}
+                        maxLength={10000}
+                        onChangeText={(v) => setEditing(editing ? { ...editing, rawText: v } : null)}
+                    />
+                    <Field
+                        label="Резюме"
+                        multiline
+                        value={editing?.summary || ''}
+                        maxLength={800}
+                        onChangeText={(v) => setEditing(editing ? { ...editing, summary: v } : null)}
+                    />
+                    <Text className="text-sm font-semibold">Проект</Text>
+                    <Box className="flex-row flex-wrap gap-2">
+                        {[{ id: null, name: 'Входящие' }, ...projects].map((p) => (
+                            <Pressable
+                                key={p.id || 'inbox'}
+                                onPress={() =>
+                                    setEditing(editing ? { ...editing, projectId: p.id } : null)
+                                }
+                                className={`min-h-12 justify-center rounded-full border px-4 ${editing?.projectId === p.id ? 'border-primary bg-secondary' : 'border-border'}`}
+                            >
+                                <Text className="text-sm">{p.name}</Text>
+                            </Pressable>
+                        ))}
+                    </Box>
+                    <Text className="text-sm font-semibold">Категория</Text>
+                    <Box className="flex-row flex-wrap gap-2">
+                        {Object.entries(categories).map(([id, name]) => (
+                            <Pressable
+                                key={id}
+                                onPress={() =>
+                                    setEditing(
+                                        editing
+                                            ? { ...editing, category: id as Thought['category'] }
+                                            : null
+                                    )
+                                }
+                                className={`min-h-12 justify-center rounded-full border px-4 ${editing?.category === id ? 'border-primary bg-secondary' : 'border-border'}`}
+                            >
+                                <Text className="text-sm">{name}</Text>
+                            </Pressable>
+                        ))}
+                    </Box>
+                    <Action
+                        disabled={busy || !hasUnsavedEdits || !editing?.rawText.trim()}
+                        onPress={() =>
+                            void run(async () => {
+                                if (!editing) return
+                                await api.updateThought(editing.id, {
+                                    title: editing.title,
+                                    rawText: editing.rawText,
+                                    summary: editing.summary,
+                                    projectId: editing.projectId,
+                                    category: editing.category,
+                                    status: 'ready'
                                 })
-                        )
-                    }
-                >
-                    Удалить мысль
-                </Action>
+                                setNoteMode('read')
+                            })
+                        }
+                    >
+                        Сохранить изменения
+                    </Action>
+                </> : null}
+                {noteMode === 'revise' && savedEditing ? <>
+                    <Field
+                        label="Что исправить?"
+                        placeholder="Например, сократи резюме и вынеси задачи списком"
+                        value={feedback}
+                        onChangeText={setFeedback}
+                        multiline
+                        maxLength={1000}
+                        editable={!busy}
+                    />
+                    <Text className="text-sm text-muted-foreground">ИИ обновит название, резюме и теги по твоей правке. Исходный текст сохранится.</Text>
+                    <Action disabled={busy || !feedback.trim()} onPress={() => void run(async () => {
+                        await api.processThought(savedEditing.id, feedback)
+                        setFeedback('')
+                        setNoteMode('read')
+                    })}>
+                        Применить правку
+                    </Action>
+                </> : null}
             </Sheet>
             <Modal visible={voiceScreen} animationType="slide" onRequestClose={cancelVoice}>
                 <SafeAreaView className="flex-1 bg-background">
