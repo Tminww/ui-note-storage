@@ -22,4 +22,6 @@ flowchart LR
 
 The queue runs while the app is active, on reconnect and when returning to the app. Expo BackgroundTask additionally schedules best-effort background passes. SQLite compare-and-swap rebases concurrent foreground/background writes instead of overwriting them. Mobile operating systems may suspend a closed app; pending work resumes on the next launch. Credentials stay in SecureStore. Existing remote records are imported without overwriting dirty local records. Deletions remain as local tombstones so retries and imports cannot resurrect them.
 
+Synced thoughts remember the Notion version they were based on. The client imports changes to the title and app-managed text, including checklist marks. If both versions changed, it pauses writes to that page until the user chooses the Notion version or keeps both as separate thoughts. The adapter checks the version again before writing. This is an optimistic check. Notion's block update API has no conditional write for making the check and patch atomic. Extra blocks authored in Notion and remote archival are outside this reconciliation.
+
 Tests cover restart, storage failure, lost acknowledgements, stale AI results, edits/deletes during sync, destination changes and idempotent retry. Native microphone and OTA delivery also require an installed device build.

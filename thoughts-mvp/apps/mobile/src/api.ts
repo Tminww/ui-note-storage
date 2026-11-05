@@ -20,6 +20,7 @@ export type Project = {
 export type Thought = {
     localId?: string
     localRevision?: number
+    notionVersion?: string
     id: string
     rawText: string
     title: string

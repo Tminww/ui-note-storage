@@ -94,7 +94,9 @@ export function syncLocalData() {
         if (notionConfigured) {
             const root = getNotionRoot()
             try {
-                const snapshot = await getNotionSnapshot()
+                const knownThoughtIds = localRepository.snapshot().thoughts
+                    .flatMap((thought) => thought.notion[root] ? [thought.notion[root].id] : [])
+                const snapshot = await getNotionSnapshot(knownThoughtIds)
                 await localRepository.importRemote(snapshot.projects, snapshot.thoughts, snapshot.root)
                 adapters.notion = await createNotionSyncAdapter(snapshot)
                 publish({ notionReadError: null })
@@ -188,8 +190,10 @@ export const localApi = {
     deleteProject: queue(localRepository.deleteProject),
     createThought: queue(localRepository.createThought),
     updateThought: queue(localRepository.updateThought),
+    updateChecklist: queue(localRepository.updateChecklist),
     deleteThought: queue(localRepository.deleteThought),
     processThought: queue(localRepository.processThought),
+    resolveNotionConflict: queue(localRepository.resolveNotionConflict),
     settings: localSettings,
     saveSettings: async (settings: Parameters<typeof saveLocalSettings>[0]) => {
         const saved = await saveLocalSettings(settings)

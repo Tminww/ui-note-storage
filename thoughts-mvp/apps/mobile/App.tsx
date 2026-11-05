@@ -34,19 +34,48 @@ import { SettingsScreen, sectionTitles, rgb, type Section } from './src/Settings
 import { accents, useAppearance } from './src/useAppearance'
 import { useVoiceInput } from './src/useVoiceInput'
 import { useAutomaticUpdates } from './src/useAutomaticUpdates'
-import type { LocalThought } from './src/localCore'
+import { notionVersionOf, type LocalThought } from './src/localCore'
 import { registerBackgroundSync } from './src/backgroundSync'
 import { allTypes } from './src/taxonomy'
+import { checklistFromList, checklistItem } from './src/checklist'
 import { syncLocalData } from './src/localService'
 
 type Page = 'thoughts' | 'projects' | 'ai' | 'settings'
 const clock = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
-function NoteSummary({ summary }: { summary: string }) {
+function NoteSummary({ summary, onToggle, onConvert, disabled }: {
+    summary: string
+    onToggle: (index: number) => void
+    onConvert: () => void
+    disabled: boolean
+}) {
+    const lines = summary.split(/\r?\n/)
+    const checklist = lines.map(checklistItem).filter((item) => item !== null)
+    const converted = checklistFromList(summary)
     return (
         <Box className="gap-2">
-            {summary.split(/\r?\n/).filter((line) => line.trim()).map((line, index) => {
+            {checklist.length ? (
+                <Text className="text-sm text-muted-foreground">
+                    Выполнено {checklist.filter((item) => item.checked).length} из {checklist.length}
+                </Text>
+            ) : null}
+            {lines.map((line, index) => {
+                if (!line.trim()) return null
+                const task = checklistItem(line)
+                if (task) return (
+                    <Pressable key={index} accessibilityRole="checkbox" accessibilityLabel={task.text}
+                        aria-checked={task.checked}
+                        accessibilityState={{ checked: task.checked, disabled }} disabled={disabled}
+                        onPress={() => onToggle(index)}
+                        className="min-h-11 flex-row items-center gap-3 rounded-lg px-1 active:bg-muted">
+                        <Icon name={task.checked ? 'checkbox-outline' : 'square-outline'}
+                            tone={task.checked ? 'text-primary' : 'text-muted-foreground'} />
+                        <Text className={`flex-1 text-base leading-6 ${task.checked ? 'text-muted-foreground line-through' : ''}`}>
+                            {task.text}
+                        </Text>
+                    </Pressable>
+                )
                 const item = line.trim().match(/^([-*•]|\d+[.)])\s+(.+)$/)
                 if (!item) return <Text key={index} selectable className="text-base leading-6">{line}</Text>
                 return (
@@ -58,6 +87,12 @@ function NoteSummary({ summary }: { summary: string }) {
                     </Box>
                 )
             })}
+            {converted !== lines.join('\n') && converted.length <= 800 ? (
+                <Pressable accessibilityRole="button" disabled={disabled} onPress={onConvert}
+                    className="min-h-11 justify-center self-start px-1">
+                    <Text className="text-sm font-semibold text-primary">Сделать чек-листом</Text>
+                </Pressable>
+            ) : null}
         </Box>
     )
 }
@@ -86,6 +121,7 @@ function ThoughtsApp() {
     const [selected, setSelected] = useState('all')
     const [draftProject, setDraftProject] = useState<string | null>(null)
     const [picker, setPicker] = useState(false)
+    const [reviewPicker, setReviewPicker] = useState<LocalThought | null>(null)
     const [showSearch, setShowSearch] = useState(false)
     const [search, setSearch] = useState('')
     const [bannerHidden, setBannerHidden] = useState(false)
@@ -126,12 +162,18 @@ function ThoughtsApp() {
     const inboxCount = thoughts.filter((t) => !t.projectId).length
     const pending = thoughts.filter((t) => t.aiPending)
     const review = thoughts.filter((t) => t.status === 'needs_review')
+    const inboxReview = review.filter((t) => !t.aiPending)
     const notionRoot = getNotionRoot()
-    const notionPending = thoughts.filter((t) => t.notion[notionRoot]?.revision !== t.revision).length
+    const notionPending = thoughts.filter((t) =>
+        t.notion[notionRoot]?.revision !== t.revision || t.notionConflicts?.[notionRoot]
+    ).length
     const projectName = (id: string | null) => projects.find((p) => p.id === id)?.name || 'Входящие'
     const notionStatus = (note: LocalThought) => {
         const link = note.notion[notionRoot]
         if (!sync.notionConfigured) return { label: 'На телефоне' }
+        if (note.notionConflicts?.[notionRoot]) return {
+            label: 'Две версии мысли', error: 'Мысль изменили на телефоне и в Notion.', link
+        }
         if (link?.revision === note.revision) return { label: 'Сохранено в Notion', link }
         const failure = note.notionErrors?.[notionRoot]
         const error = (failure?.revision === note.revision ? failure.message : undefined) ??
@@ -139,6 +181,7 @@ function ThoughtsApp() {
         return { label: error ? 'Ошибка Notion' : 'В очереди Notion', error, link }
     }
     const editingNotion = savedEditing ? notionStatus(savedEditing) : null
+    const editingConflict = savedEditing?.notionConflicts?.[notionRoot]
     const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.id}` : null
     const editingText = savedEditing
         ? [...new Set([savedEditing.title, savedEditing.summary, savedEditing.rawText].map((text) => text.trim()).filter(Boolean))].join('\n\n')
@@ -302,63 +345,103 @@ function ThoughtsApp() {
         if (!state.preferences.voiceReview && text.trim()) await saveText(text)
         else input.current?.focus()
     }
+    const assignReviewProject = (thought: LocalThought, projectId: string | null) => void run(async () => {
+        await api.updateThought(thought.id, { projectId, status: 'ready' }, thought.revision)
+        setReviewPicker(null)
+    })
     const noteCard = (t: LocalThought) => {
         const status = notionStatus(t)
+        const showReviewActions = page === 'thoughts' && selected === 'review'
+        const suggestedProject = t.classificationProposal?.project
+        const canAcceptProject = suggestedProject || (t.projectId && !t.projectLocked)
+        const preview = (t.summary || t.rawText).split(/\r?\n/).map((line) => {
+            const item = checklistItem(line)
+            return item ? `${item.checked ? '☑' : '☐'} ${item.text}` : line
+        }).join('\n')
         const color = state.preferences.projectColors
             ? projects.find((p) => p.id === t.projectId)?.color
             : undefined
         return (
-            <Pressable
-                key={t.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Открыть мысль: ${t.title}`}
-                onPress={() => {
-                    setError('')
-                    setCopyNotice('')
-                    setNoteMode('read')
-                    setNoteMenu(false)
-                    setEditing({ ...t })
-                }}
-                className="gap-4 rounded-3xl border border-border bg-card p-4"
-            >
-                <Text className="text-base leading-6">{t.rawText}</Text>
-                {t.summary ? (
-                    <Text className="text-sm leading-5 text-muted-foreground" numberOfLines={2}>
-                        {t.summary}
-                    </Text>
-                ) : null}
-                <Box className="flex-row items-center justify-between gap-3">
-                    <Box className="flex-row items-center gap-2 rounded-full bg-secondary px-3 py-1">
-                        {color ? (
-                            <Box
-                                className="h-2 w-2 rounded-full"
-                                style={{ backgroundColor: color }}
-                            />
-                        ) : null}
-                        <Text className="text-xs font-semibold text-primary">
-                            {projectName(t.projectId)}
+            <Box key={t.id} className="rounded-2xl border border-border bg-card">
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Открыть мысль: ${t.title}`}
+                    onPress={() => {
+                        setError('')
+                        setCopyNotice('')
+                        setNoteMode('read')
+                        setNoteMenu(false)
+                        setEditing({ ...t })
+                    }}
+                    className="gap-2 rounded-2xl p-4 active:bg-muted"
+                >
+                    <Text className="text-base font-semibold leading-6" numberOfLines={2}>{t.title || t.rawText}</Text>
+                    {t.summary || (t.title && t.title !== t.rawText) ? (
+                        <Text className="text-sm leading-5 text-muted-foreground" numberOfLines={2}>
+                            {preview}
+                        </Text>
+                    ) : null}
+                    <Box className="flex-row items-center justify-between gap-3">
+                        <Box className="flex-row items-center gap-2 rounded-full bg-secondary px-3 py-1">
+                            {color ? (
+                                <Box
+                                    className="h-2 w-2 rounded-full"
+                                    style={{ backgroundColor: color }}
+                                />
+                            ) : null}
+                            <Text className="text-xs font-semibold text-primary">
+                                {projectName(t.projectId)}
+                            </Text>
+                        </Box>
+                        <Text className="text-xs text-muted-foreground">
+                            {new Date(t.createdAt).toLocaleTimeString('ru-RU', {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })}
                         </Text>
                     </Box>
-                    <Text className="text-xs text-muted-foreground">
-                        {new Date(t.createdAt).toLocaleTimeString('ru-RU', {
-                            hour: '2-digit',
-                            minute: '2-digit'
-                        })}
-                    </Text>
-                </Box>
-                <Text className={`text-xs ${status.error ? 'text-destructive' : 'text-muted-foreground'}`}>
-                    {status.label}
-                </Text>
-                {t.aiPending || t.status === 'needs_review' ? (
-                    <Text className="text-xs text-muted-foreground">
-                        {t.aiPending
-                            ? sync.online
-                                ? 'Ждёт обработки AI'
-                                : 'AI обработает после подключения'
-                            : t.classificationProposal ? 'DeepSeek предложил новый проект или тип · проверь' : 'Нужно проверить классификацию'}
-                    </Text>
+                    {status.error ? <Text className="text-xs text-destructive">{status.label}</Text> : null}
+                    {!showReviewActions && (t.aiPending || t.status === 'needs_review') ? (
+                        <Text className="text-xs text-muted-foreground">
+                            {t.aiPending
+                                ? sync.online
+                                    ? 'Ждёт обработки AI'
+                                    : 'AI обработает после подключения'
+                                : 'На проверку'}
+                        </Text>
+                    ) : null}
+                </Pressable>
+                {showReviewActions ? (
+                    <Box className="flex-row flex-wrap gap-2 border-t border-border px-4 py-2">
+                        {canAcceptProject ? (
+                            <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center rounded-xl bg-secondary px-3"
+                                onPress={() => {
+                                    if (!suggestedProject || !t.classificationProposal) {
+                                        assignReviewProject(t, t.projectId)
+                                        return
+                                    }
+                                    const proposal = t.classificationProposal
+                                    void run(async () => {
+                                        await localRepository.confirmClassification(t.id, t.revision, proposal, true)
+                                        void syncLocalData()
+                                    })
+                                }}>
+                                <Text className="text-sm font-semibold text-primary">
+                                    Принять «{suggestedProject?.name ?? projectName(t.projectId)}»
+                                </Text>
+                            </Pressable>
+                        ) : null}
+                        <Pressable accessibilityRole="button" disabled={busy || !projects.length} className="min-h-11 justify-center px-2"
+                            onPress={() => setReviewPicker(t)}>
+                            <Text className={`text-sm ${projects.length ? 'text-primary' : 'text-muted-foreground'}`}>Выбрать проект</Text>
+                        </Pressable>
+                        <Pressable accessibilityRole="button" disabled={busy} className="min-h-11 justify-center px-2"
+                            onPress={() => assignReviewProject(t, null)}>
+                            <Text className="text-sm">Оставить во входящих</Text>
+                        </Pressable>
+                    </Box>
                 ) : null}
-            </Pressable>
+            </Box>
         )
     }
     const thoughtsScreen = () => {
@@ -366,6 +449,7 @@ function ThoughtsApp() {
             (t) =>
                 (selected === 'all' ||
                     (selected === 'inbox' && !t.projectId) ||
+                    (selected === 'review' && !t.aiPending && t.status === 'needs_review') ||
                     (selected === 'notion-errors' && Boolean(notionStatus(t).error)) ||
                     t.projectId === selected) &&
                 (!search ||
@@ -386,6 +470,9 @@ function ThoughtsApp() {
                         {[
                             { id: 'all', name: 'Все' },
                             { id: 'inbox', name: `Входящие · ${inboxCount}` },
+                            ...(inboxReview.length || selected === 'review'
+                                ? [{ id: 'review', name: `На проверку · ${inboxReview.length}` }]
+                                : []),
                             ...(notionErrorCount || selected === 'notion-errors'
                                 ? [{ id: 'notion-errors', name: `Ошибки Notion · ${notionErrorCount}` }]
                                 : []),
@@ -475,11 +562,15 @@ function ThoughtsApp() {
                             <Heading>
                                 {selected === 'notion-errors' && !notionErrorCount
                                     ? 'Ошибок Notion нет'
-                                    : thoughts.length ? 'Ничего не найдено' : 'Пока нет мыслей'}
+                                    : selected === 'review' && !inboxReview.length
+                                        ? 'Всё разобрано'
+                                        : thoughts.length ? 'Ничего не найдено' : 'Пока нет мыслей'}
                             </Heading>
                             <Text className="text-center text-sm leading-5 text-muted-foreground">
                                 {selected === 'notion-errors' && !notionErrorCount
                                     ? 'Здесь появятся мысли, которые не удалось синхронизировать.'
+                                    : selected === 'review' && !inboxReview.length
+                                    ? 'Новые предложения появятся здесь.'
                                     : thoughts.length
                                     ? 'Попробуй другой поиск или фильтр.'
                                     : 'Запиши или продиктуй первую мысль. Интернет для сохранения не нужен.'}
@@ -909,6 +1000,16 @@ function ThoughtsApp() {
                     </Pressable>
                 ))}
             </Sheet>
+            <Sheet visible={Boolean(reviewPicker)} title="Выбрать проект" onClose={() => setReviewPicker(null)}>
+                {error ? <Info warning>{error}</Info> : null}
+                {reviewPicker ? projects.map((project) => (
+                    <Pressable key={project.id} accessibilityRole="button" disabled={busy}
+                        onPress={() => assignReviewProject(reviewPicker, project.id)}
+                        className="min-h-11 justify-center border-b border-border">
+                        <Text>{project.name}</Text>
+                    </Pressable>
+                )) : null}
+            </Sheet>
             <Sheet
                 visible={projectEditor !== null}
                 title={projectEditor?.id ? 'Изменить проект' : 'Новый проект'}
@@ -1060,7 +1161,12 @@ function ThoughtsApp() {
                             {savedEditing.title || 'Без названия'}
                         </Heading>
                     </Box>
-                    {savedEditing.summary ? <NoteSummary summary={savedEditing.summary} /> : null}
+                    {savedEditing.summary ? (
+                        <NoteSummary summary={savedEditing.summary} disabled={busy}
+                            onToggle={(index) => void run(() => api.updateChecklist(savedEditing.id, savedEditing.revision, index))}
+                            onConvert={() => void run(() => api.updateChecklist(savedEditing.id, savedEditing.revision))}
+                        />
+                    ) : null}
                     <Box className="gap-2">
                         <Text className="text-sm font-semibold text-muted-foreground">Исходный текст</Text>
                         <Text selectable className="text-base leading-6">{savedEditing.rawText}</Text>
@@ -1074,7 +1180,23 @@ function ThoughtsApp() {
                             {savedEditing.aiPending ? (savedEditing.aiFeedback ? ' · Правка ИИ в очереди' : ' · В очереди ИИ') : ''}
                         </Text>
                         {savedEditing.aiFeedback && savedEditing.errorMessage ? <Info warning>{savedEditing.errorMessage}</Info> : null}
-                        {editingNotion?.error ? <>
+                        {editingConflict && sync.notionConfigured ? (
+                            <Box className="gap-3 rounded-2xl border border-border bg-background p-4">
+                                <Heading>Две версии мысли</Heading>
+                                <Text className="text-sm text-muted-foreground">
+                                    Наверху твоя версия. Ниже версия из Notion.
+                                </Text>
+                                <Text selectable className="font-semibold">{editingConflict.title}</Text>
+                                {editingConflict.summary ? <Text selectable>{editingConflict.summary}</Text> : null}
+                                <Text selectable>{editingConflict.rawText}</Text>
+                                <Action disabled={busy} onPress={() => void run(() => api.resolveNotionConflict(
+                                    savedEditing.id, notionRoot, savedEditing.revision, notionVersionOf(editingConflict), true
+                                ))}>Сохранить обе версии</Action>
+                                <Action secondary disabled={busy} onPress={() => void run(() => api.resolveNotionConflict(
+                                    savedEditing.id, notionRoot, savedEditing.revision, notionVersionOf(editingConflict), false
+                                ))}>Оставить только версию Notion</Action>
+                            </Box>
+                        ) : editingNotion?.error ? <>
                             <Info warning>{editingNotion.error}</Info>
                             <Action secondary disabled={busy || !sync.online || sync.syncing}
                                 onPress={() => void run(syncLocalData)}>
@@ -1173,7 +1295,7 @@ function ThoughtsApp() {
                                     projectId: editing.projectId,
                                     category: editing.category,
                                     status: 'ready'
-                                })
+                                }, editing.revision)
                                 setNoteMode('read')
                             })
                         }
