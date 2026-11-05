@@ -376,6 +376,15 @@ export function SettingsScreen({
     else if (section === 'ai')
         content = (
             <>
+                <Box className="overflow-hidden rounded-2xl border border-border bg-card">
+                    <Toggle title="Спрашивать перед созданием проекта или типа"
+                        caption="По умолчанию ИИ создаёт подходящие проекты и типы автоматически."
+                        value={preferences.confirmAIProposals}
+                        onChange={(confirmAIProposals) => {
+                            void localRepository.preferences({ confirmAIProposals }).then(retryLocalData).catch((e) => onError(e.message))
+                        }}
+                    />
+                </Box>
                 <Info>
                     Обработка идёт через интернет. До подключения AI исходный текст остаётся в
                     очереди на телефоне.
