@@ -22,6 +22,7 @@ export type Thought = {
     localRevision?: number
     notionParentId?: string
     notionObject?: 'page' | 'toggle'
+    notionReplacesVersion?: string
     notionReplacesId?: string
     notionVersion?: string
     id: string
