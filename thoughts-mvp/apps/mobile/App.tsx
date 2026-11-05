@@ -37,16 +37,44 @@ import { useAutomaticUpdates } from './src/useAutomaticUpdates'
 import type { LocalThought } from './src/localCore'
 import { registerBackgroundSync } from './src/backgroundSync'
 import { allTypes } from './src/taxonomy'
+import { checklistFromList, checklistItem } from './src/checklist'
 import { syncLocalData } from './src/localService'
 
 type Page = 'thoughts' | 'projects' | 'ai' | 'settings'
 const clock = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
-function NoteSummary({ summary }: { summary: string }) {
+function NoteSummary({ summary, onToggle, onConvert, disabled }: {
+    summary: string
+    onToggle: (index: number) => void
+    onConvert: () => void
+    disabled: boolean
+}) {
+    const lines = summary.split(/\r?\n/)
+    const checklist = lines.map(checklistItem).filter((item) => item !== null)
+    const converted = checklistFromList(summary)
     return (
         <Box className="gap-2">
-            {summary.split(/\r?\n/).filter((line) => line.trim()).map((line, index) => {
+            {checklist.length ? (
+                <Text className="text-sm text-muted-foreground">
+                    Выполнено {checklist.filter((item) => item.checked).length} из {checklist.length}
+                </Text>
+            ) : null}
+            {lines.map((line, index) => {
+                if (!line.trim()) return null
+                const task = checklistItem(line)
+                if (task) return (
+                    <Pressable key={index} accessibilityRole="checkbox" accessibilityLabel={task.text}
+                        accessibilityState={{ checked: task.checked, disabled }} disabled={disabled}
+                        onPress={() => onToggle(index)}
+                        className="min-h-11 flex-row items-center gap-3 rounded-lg px-1 active:bg-muted">
+                        <Icon name={task.checked ? 'checkbox-outline' : 'square-outline'}
+                            tone={task.checked ? 'text-primary' : 'text-muted-foreground'} />
+                        <Text className={`flex-1 text-base leading-6 ${task.checked ? 'text-muted-foreground line-through' : ''}`}>
+                            {task.text}
+                        </Text>
+                    </Pressable>
+                )
                 const item = line.trim().match(/^([-*•]|\d+[.)])\s+(.+)$/)
                 if (!item) return <Text key={index} selectable className="text-base leading-6">{line}</Text>
                 return (
@@ -58,6 +86,12 @@ function NoteSummary({ summary }: { summary: string }) {
                     </Box>
                 )
             })}
+            {converted !== lines.join('\n') && converted.length <= 800 ? (
+                <Pressable accessibilityRole="button" disabled={disabled} onPress={onConvert}
+                    className="min-h-11 justify-center self-start px-1">
+                    <Text className="text-sm font-semibold text-primary">Сделать чек-листом</Text>
+                </Pressable>
+            ) : null}
         </Box>
     )
 }
@@ -1060,7 +1094,12 @@ function ThoughtsApp() {
                             {savedEditing.title || 'Без названия'}
                         </Heading>
                     </Box>
-                    {savedEditing.summary ? <NoteSummary summary={savedEditing.summary} /> : null}
+                    {savedEditing.summary ? (
+                        <NoteSummary summary={savedEditing.summary} disabled={busy}
+                            onToggle={(index) => void run(() => api.updateChecklist(savedEditing.id, savedEditing.revision, index))}
+                            onConvert={() => void run(() => api.updateChecklist(savedEditing.id, savedEditing.revision))}
+                        />
+                    ) : null}
                     <Box className="gap-2">
                         <Text className="text-sm font-semibold text-muted-foreground">Исходный текст</Text>
                         <Text selectable className="text-base leading-6">{savedEditing.rawText}</Text>

@@ -177,7 +177,9 @@ async function updateMetadata(pageId: string, meta: object, raw?: string, summar
     )
     const nextIds: string[] = []
     if (raw !== undefined) {
-        const formatted = summary?.trim().replace(/^[ \t]*[-*][ \t]+/gm, '• ')
+        const formatted = summary?.trim()
+            .replace(/^[ \t]*[-*•][ \t]+\[([ xX])\][ \t]+/gm, (_, mark) => mark === ' ' ? '☐ ' : '☑ ')
+            .replace(/^[ \t]*[-*][ \t]+/gm, '• ')
         const visible = formatted ? `Резюме\n${formatted}\n\nИсходный текст\n${raw}` : raw
         const texts = Array.from({ length: Math.ceil(visible.length / 1800) }, (_, i) =>
             visible.slice(i * 1800, (i + 1) * 1800)
