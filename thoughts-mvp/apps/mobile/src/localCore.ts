@@ -48,6 +48,15 @@ export type AIHistoryEntry = {
     applied?: boolean
     usage?: AIUsage
 }
+export type AppNotification = {
+    id: string
+    message: string
+    createdAt: string
+    read: boolean
+    kind: 'info' | 'error'
+    thoughtId?: string
+    source?: string
+}
 export type LocalState = {
     version: 1
     projects: LocalProject[]
@@ -57,6 +66,7 @@ export type LocalState = {
     preferences: Preferences
     aiHistory: AIHistoryEntry[]
     customCategories: ThoughtType[]
+    notifications: AppNotification[]
 }
 export type DocumentStorage = {
     load: () => Promise<string | null>
@@ -100,6 +110,7 @@ const initial = (): LocalState => ({
     thoughts: [],
     aiHistory: [],
     customCategories: [],
+    notifications: [],
     draft: '',
     lastProjectId: null,
     preferences: {
@@ -142,7 +153,7 @@ export function createLocalRepository(
                     'Не удалось прочитать локальную базу. Данные сохранены, база не перезаписана.'
                 )
             }
-            state = { ...saved, lastProjectId: saved.lastProjectId ?? null, customCategories: Array.isArray(saved.customCategories) ? saved.customCategories : [], aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
+            state = { ...saved, notifications: Array.isArray(saved.notifications) ? saved.notifications : [], lastProjectId: saved.lastProjectId ?? null, customCategories: Array.isArray(saved.customCategories) ? saved.customCategories : [], aiHistory: Array.isArray(saved.aiHistory) ? saved.aiHistory : [], preferences: { ...initial().preferences, ...saved.preferences } }
             for (const thought of state.thoughts) {
                 const type = thought.categoryDefinition
                 if (type?.id.startsWith('custom:') && !state.customCategories.some((c) => c.id === type.id)) state.customCategories.push(type)
@@ -222,6 +233,18 @@ export function createLocalRepository(
             mutate((s) => {
                 s.draft = draft
             }),
+        notify: (message: string, kind: AppNotification['kind'] = 'info', thoughtId?: string, source?: string) =>
+            mutate((s) => {
+                if (!message.trim()) return
+                if (source && s.notifications.some((item) => item.source === source)) return
+                const last = s.notifications.at(-1)
+                if (last?.message === message && last.kind === kind && last.thoughtId === thoughtId &&
+                    now() - Date.parse(last.createdAt) < 60000) return
+                s.notifications.push({ id: id(), message: historyError(message), kind, thoughtId, source, createdAt: stamp(), read: false })
+                s.notifications = s.notifications.slice(-100)
+            }),
+        readNotifications: () => mutate((s) => { s.notifications.forEach((item) => { item.read = true }) }),
+        clearNotifications: () => mutate((s) => { s.notifications = [] }),
         preferences: (patch: Partial<Preferences>) =>
             mutate((s) => {
                 Object.assign(s.preferences, patch)
