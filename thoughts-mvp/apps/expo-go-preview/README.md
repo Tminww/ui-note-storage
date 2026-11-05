@@ -1,8 +1,10 @@
-# Thoughts — Expo Go UI Preview
+# Thoughts — раннее демо Expo Go
 
-**[ОТКРЫТЬ ДЕМО В EXPO SNACK](https://snack.expo.dev/?name=Thoughts+UI+Demo&sourceUrl=https%3A%2F%2Fraw.githubusercontent.com%2FTminww%2Fui-note-storage%2Fthoughts-ai-inbox-mvp%2Fthoughts-mvp%2Fapps%2Fexpo-go-preview%2FApp.js&sdkVersion=57.0.0&platform=mydevice)**
+**[ОТКРЫТЬ ДЕМО В EXPO SNACK](https://snack.expo.dev/?name=Thoughts+UI+Demo&sourceUrl=https%3A%2F%2Fraw.githubusercontent.com%2FTminww%2Fui-note-storage%2Fmaster%2Fthoughts-mvp%2Fapps%2Fexpo-go-preview%2FApp.js&sdkVersion=57.0.0&platform=mydevice)**
 
-Это интерактивное демо интерфейса Thoughts без сервера, ключей, Notion, OpenRouter и нативного голосового модуля.
+Это историческое интерактивное демо раннего интерфейса Thoughts без сервера, ключей, Notion, OpenRouter и нативного голосового модуля.
+
+Интерфейс отличается от актуального приложения в `apps/mobile`.
 
 ## Запуск с телефона
 
