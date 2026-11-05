@@ -20,6 +20,9 @@ export type Project = {
 export type Thought = {
     localId?: string
     localRevision?: number
+    notionParentId?: string
+    notionObject?: 'page' | 'toggle'
+    notionReplacesId?: string
     notionVersion?: string
     id: string
     rawText: string

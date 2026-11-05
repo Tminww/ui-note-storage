@@ -187,7 +187,7 @@ function ThoughtsApp() {
     }
     const editingNotion = savedEditing ? notionStatus(savedEditing) : null
     const editingConflict = savedEditing?.notionConflicts?.[notionRoot]
-    const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.id}` : null
+    const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.parentId || editingNotion.link.id}${editingNotion.link.parentId ? '#' + editingNotion.link.id.replace(/-/g, '') : ''}` : null
     const editingText = savedEditing
         ? [...new Set([savedEditing.title, savedEditing.summary, savedEditing.rawText].map((text) => text.trim()).filter(Boolean))].join('\n\n')
         : ''
