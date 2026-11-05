@@ -1,3 +1,4 @@
+import { normalizeAIResponse } from '../../../shared/ai-response.mjs'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import type { Project, Settings } from './api'
 import { allTypes, namedSuggestion, type Category, type ClassificationProposal, type ThoughtType } from './taxonomy'
@@ -134,20 +135,21 @@ async function generate(text: string, settings: Settings, usage: AIUsage, revisi
         messages
     }, usage)
     const raw = response.choices?.[0]?.message?.content
-    let obj: any
     try {
-        obj = JSON.parse(String(raw).replace(/^```(?:json)?\s*|\s*```$/g, ''))
+        return normalizeAIResponse(raw, text)
     } catch {
-        throw new Error('DeepSeek не вернул JSON')
-    }
-    if (typeof obj?.title !== 'string' || typeof obj?.summary !== 'string')
-        throw new Error('Ответ ИИ не содержит заголовок или резюме')
-    return {
-        title: String(obj.title || text.slice(0, 90)).slice(0, 140),
-        summary: obj.summary.trim().slice(0, 800),
-        tags: Array.isArray(obj.tags)
-            ? obj.tags.filter((t: any) => typeof t === 'string').slice(0, 4)
-            : []
+        const repaired = await openRouter('v1/chat/completions', {
+            model,
+            temperature: 0.1,
+            max_tokens: 1000,
+            response_format: { type: 'json_object' },
+            messages: [
+                ...messages,
+                ...(typeof raw === 'string' && raw.trim() ? [{ role: 'assistant', content: raw.slice(0, 2000) }] : []),
+                { role: 'user', content: 'Повтори ответ целиком в JSON. Обязательные поля title и summary — непустые строки, tags — массив строк. До 800 символов в summary. Заголовок короткий. Никакого текста вне JSON.' }
+            ]
+        }, usage)
+        return normalizeAIResponse(repaired.choices?.[0]?.message?.content, text)
     }
 }
 export async function reviseNote(rawText: string, settings: Settings, revision: Revision): Promise<EnrichmentResult> {

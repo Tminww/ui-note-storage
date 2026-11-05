@@ -1,3 +1,4 @@
+import { normalizeAIResponse } from '../../../../shared/ai-response.mjs'
 const PROVIDERS = {
   openrouter: { label: 'OpenRouter', url: 'https://openrouter.ai/api/v1/chat/completions', key: 'OPENROUTER_API_KEY' },
   openai: { label: 'OpenAI (напрямую)', url: 'https://api.openai.com/v1/chat/completions', key: 'OPENAI_API_KEY' },
@@ -55,16 +56,7 @@ export function createAI({ env = process.env, fetchFn = fetch } = {}) {
         ]
       }, fetchFn);
       const content = data?.choices?.[0]?.message?.content;
-      if (typeof content !== 'string') throw new Error('LLM не вернула текст');
-      let parsed;
-      try { parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); }
-      catch { throw new Error('LLM не вернула корректный JSON'); }
-      if (!parsed || typeof parsed.title !== 'string' || typeof parsed.summary !== 'string') throw new Error('Ответ LLM не содержит title / summary');
-      return {
-        title: parsed.title.trim().slice(0, 140) || rawText.slice(0, 90),
-        summary: parsed.summary.trim().slice(0, 800),
-        tags: Array.isArray(parsed.tags) ? [...new Set(parsed.tags.filter(x => typeof x === 'string').map(x => x.trim().slice(0, 28)).filter(Boolean))].slice(0, 4) : []
-      };
+      return normalizeAIResponse(content, rawText);
     },
     async suggest(settings, rawText, context) {
       const p = PROVIDERS[settings.generatorProvider];

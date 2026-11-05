@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
+import { normalizeAIResponse } from '../../../shared/ai-response.mjs'
 import { allTypes, namedSuggestion } from '../src/taxonomy.ts'
 
 async function ai(categoryConfidence, projectConfidence, usage, fixture = {}) {
@@ -44,8 +45,8 @@ async function ai(categoryConfidence, projectConfidence, usage, fixture = {}) {
         readFileSync(new URL('../src/onDeviceAI.ts', import.meta.url), 'utf8')
     ).replace(/^import .*$/gm, '')
     const stub =
-        'const {allTypes,namedSuggestion}=globalThis.__taxonomyFixture;const AsyncStorage={getItem:async()=>null,setItem:async()=>{}};const readSecret=async()=>"mock";const notionMcpIsConnected=async()=>false;const fetch=globalThis.__aiFixture.request;'
-    globalThis.__taxonomyFixture = { allTypes, namedSuggestion }
+        'const {allTypes,namedSuggestion,normalizeAIResponse}=globalThis.__taxonomyFixture;const AsyncStorage={getItem:async()=>null,setItem:async()=>{}};const readSecret=async()=>"mock";const notionMcpIsConnected=async()=>false;const fetch=globalThis.__aiFixture.request;'
+    globalThis.__taxonomyFixture = { allTypes, namedSuggestion, normalizeAIResponse }
     return import(
         `data:text/javascript;base64,${Buffer.from(stub + source + `\n// ${Math.random()}`).toString('base64')}`
     )
