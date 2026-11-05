@@ -2,11 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createVoiceSession } from '../src/voiceSession.ts'
 
-function fixture(prepare = async () => {}) {
+function fixture(prepare = async () => {}, silenceMs = 0) {
     let time = 0
     const calls = { start: 0, stop: 0, abort: 0 }
     const texts = []
-    const voice = createVoiceSession({ prepare, start() { calls.start++ }, stop() { calls.stop++ }, abort() { calls.abort++ } }, (text) => texts.push(text), () => time)
+    const voice = createVoiceSession({ prepare, start() { calls.start++ }, stop() { calls.stop++ }, abort() { calls.abort++ } }, (text) => texts.push(text), () => time, silenceMs)
     return { voice, calls, texts, advance(ms) { time += ms; voice.tick() }, result(text, isFinal = false) { voice.onResult({ isFinal, results: [{ transcript: text }] }) } }
 }
 async function listening(f) { await f.voice.start(''); f.voice.onStart() }
@@ -140,4 +140,24 @@ test('a final-only provider can flush its transcript after the no-result timeout
     assert.equal(f.voice.snapshot().text, 'Ответ после остановки')
     assert.equal(f.voice.snapshot().error, '')
     assert.equal(f.voice.snapshot().phase, 'paused')
+})
+
+test('continuous segments retain one native session and stop after four seconds of silence', async () => {
+    const f = fixture(async () => {}, 4000)
+    await listening(f)
+    f.result('Первая фраза.', true)
+    f.advance(3000)
+    f.voice.onVolume(5)
+    f.result('Вторая фраза.', true)
+    assert.equal(f.calls.start, 1)
+    assert.equal(f.voice.snapshot().phase, 'listening')
+    f.advance(3999)
+    assert.equal(f.calls.stop, 0)
+    f.advance(1)
+    assert.equal(f.calls.stop, 1)
+    f.voice.onEnd()
+    f.advance(5000)
+    assert.equal(f.calls.start, 1)
+    assert.equal(f.voice.snapshot().phase, 'paused')
+    assert.equal(f.voice.snapshot().text, 'Первая фраза.\nВторая фраза.')
 })
