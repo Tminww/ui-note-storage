@@ -435,3 +435,31 @@ test('revision instructions survive restart and a failed attempt without replaci
     assert.equal(saved.aiFeedback, undefined)
     assert.equal(saved.aiPending, false)
 })
+
+test('remote edits update clean notes while divergent edits wait for a choice', async () => {
+    const f = fixture()
+    const a = f.open()
+    const remote = {
+        id: 'notion-note', localId: 'shared', localRevision: 1, notionVersion: 'v1',
+        title: 'Покупки', rawText: 'Купить чай', summary: '- [ ] Чай',
+        tags: [], projectId: null, status: 'ready'
+    }
+    await a.importRemote([], [remote], 'root')
+    const changed = { ...remote, notionVersion: 'v2', summary: '- [x] Чай' }
+    await a.importRemote([], [changed], 'root')
+    let local = a.snapshot().thoughts[0]
+    assert.equal(local.summary, '- [x] Чай')
+    await a.updateThought(local.id, { title: 'Моя версия', status: 'ready' }, local.revision)
+    const latest = { ...changed, notionVersion: 'v3', title: 'Версия из Notion' }
+    await a.importRemote([], [latest], 'root')
+    local = a.snapshot().thoughts[0]
+    assert.equal(local.title, 'Моя версия')
+    assert.equal(local.notionConflicts.root.title, 'Версия из Notion')
+    let writes = 0
+    const adapter = notion().adapter
+    await a.flush({ notion: { ...adapter, thought: async () => { writes++; return 'wrong' } } })
+    assert.equal(writes, 0)
+    await a.resolveNotionConflict(local.id, 'root', local.revision, 'v3', true)
+    assert.deepEqual(a.snapshot().thoughts.map((note) => note.title), ['Версия из Notion', 'Моя версия (моя копия)'])
+    assert.equal(a.snapshot().thoughts[0].notionConflicts.root, undefined)
+})

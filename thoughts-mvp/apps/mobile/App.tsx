@@ -34,7 +34,7 @@ import { SettingsScreen, sectionTitles, rgb, type Section } from './src/Settings
 import { accents, useAppearance } from './src/useAppearance'
 import { useVoiceInput } from './src/useVoiceInput'
 import { useAutomaticUpdates } from './src/useAutomaticUpdates'
-import type { LocalThought } from './src/localCore'
+import { notionVersionOf, type LocalThought } from './src/localCore'
 import { registerBackgroundSync } from './src/backgroundSync'
 import { allTypes } from './src/taxonomy'
 import { syncLocalData } from './src/localService'
@@ -132,6 +132,9 @@ function ThoughtsApp() {
     const notionStatus = (note: LocalThought) => {
         const link = note.notion[notionRoot]
         if (!sync.notionConfigured) return { label: 'На телефоне' }
+        if (note.notionConflicts?.[notionRoot]) return {
+            label: 'Две версии мысли', error: 'Мысль изменили на телефоне и в Notion.', link
+        }
         if (link?.revision === note.revision) return { label: 'Сохранено в Notion', link }
         const failure = note.notionErrors?.[notionRoot]
         const error = (failure?.revision === note.revision ? failure.message : undefined) ??
@@ -139,6 +142,7 @@ function ThoughtsApp() {
         return { label: error ? 'Ошибка Notion' : 'В очереди Notion', error, link }
     }
     const editingNotion = savedEditing ? notionStatus(savedEditing) : null
+    const editingConflict = savedEditing?.notionConflicts?.[notionRoot]
     const editingNotionUrl = editingNotion?.link ? `https://www.notion.so/${editingNotion.link.id}` : null
     const editingText = savedEditing
         ? [...new Set([savedEditing.title, savedEditing.summary, savedEditing.rawText].map((text) => text.trim()).filter(Boolean))].join('\n\n')
@@ -1074,7 +1078,23 @@ function ThoughtsApp() {
                             {savedEditing.aiPending ? (savedEditing.aiFeedback ? ' · Правка ИИ в очереди' : ' · В очереди ИИ') : ''}
                         </Text>
                         {savedEditing.aiFeedback && savedEditing.errorMessage ? <Info warning>{savedEditing.errorMessage}</Info> : null}
-                        {editingNotion?.error ? <>
+                        {editingConflict && sync.notionConfigured ? (
+                            <Box className="gap-3 rounded-2xl border border-border bg-background p-4">
+                                <Heading>Две версии мысли</Heading>
+                                <Text className="text-sm text-muted-foreground">
+                                    Наверху твоя версия. Ниже версия из Notion.
+                                </Text>
+                                <Text selectable className="font-semibold">{editingConflict.title}</Text>
+                                {editingConflict.summary ? <Text selectable>{editingConflict.summary}</Text> : null}
+                                <Text selectable>{editingConflict.rawText}</Text>
+                                <Action disabled={busy} onPress={() => void run(() => api.resolveNotionConflict(
+                                    savedEditing.id, notionRoot, savedEditing.revision, notionVersionOf(editingConflict), true
+                                ))}>Сохранить обе версии</Action>
+                                <Action secondary disabled={busy} onPress={() => void run(() => api.resolveNotionConflict(
+                                    savedEditing.id, notionRoot, savedEditing.revision, notionVersionOf(editingConflict), false
+                                ))}>Оставить только версию Notion</Action>
+                            </Box>
+                        ) : editingNotion?.error ? <>
                             <Info warning>{editingNotion.error}</Info>
                             <Action secondary disabled={busy || !sync.online || sync.syncing}
                                 onPress={() => void run(syncLocalData)}>
