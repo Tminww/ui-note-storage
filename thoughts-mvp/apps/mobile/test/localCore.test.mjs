@@ -435,3 +435,18 @@ test('revision instructions survive restart and a failed attempt without replaci
     assert.equal(saved.aiFeedback, undefined)
     assert.equal(saved.aiPending, false)
 })
+
+test('checklist progress persists and a stale tap cannot toggle a different item', async () => {
+    const f = fixture()
+    const a = f.open()
+    const note = await a.createThought('Купить чай и кофе', null)
+    const saved = await a.updateThought(note.id, { summary: '- Чай\n- Кофе', status: 'ready' })
+    const converted = await a.updateChecklist(note.id, saved.revision)
+    const checked = await a.updateChecklist(note.id, converted.revision, 1)
+    await assert.rejects(a.updateChecklist(note.id, converted.revision, 0), /Мысль изменилась/)
+    const b = f.open()
+    await b.initialize()
+    assert.equal(b.snapshot().thoughts[0].summary, '- [ ] Чай\n- [x] Кофе')
+    assert.equal(b.snapshot().thoughts[0].rawText, note.rawText)
+    assert.equal(checked.aiPending, false)
+})

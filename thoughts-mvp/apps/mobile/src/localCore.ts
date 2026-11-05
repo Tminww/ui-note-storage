@@ -1,4 +1,5 @@
 import type { Project, Thought } from './api'
+import { checklistFromList, toggleChecklistItem } from './checklist.ts'
 import { allTypes, namedSuggestion, normalizedName, type ClassificationProposal, type ThoughtType } from './taxonomy.ts'
 
 export type Preferences = {
@@ -352,6 +353,20 @@ export function createLocalRepository(
                     t.retryAt = 0
                 }
                 touch(t)
+                return t
+            }),
+        updateChecklist: (noteId: string, revision: number, index?: number) =>
+            mutate((s) => {
+                const t = findNote(s, noteId)
+                if (t.revision !== revision) throw new Error('Мысль изменилась. Попробуй ещё раз.')
+                const summary = index === undefined
+                    ? checklistFromList(t.summary)
+                    : toggleChecklistItem(t.summary, index)
+                if (summary.length > 800) throw new Error('Чек-лист превышает 800 символов')
+                if (summary !== t.summary) {
+                    t.summary = summary
+                    touch(t)
+                }
                 return t
             }),
         confirmClassification: (noteId: string, revision: number, proposal: ClassificationProposal, projectOnly = false) =>

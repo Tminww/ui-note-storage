@@ -188,6 +188,7 @@ export const localApi = {
     deleteProject: queue(localRepository.deleteProject),
     createThought: queue(localRepository.createThought),
     updateThought: queue(localRepository.updateThought),
+    updateChecklist: queue(localRepository.updateChecklist),
     deleteThought: queue(localRepository.deleteThought),
     processThought: queue(localRepository.processThought),
     settings: localSettings,
