@@ -128,7 +128,7 @@ try:
     capture("04-restored-after-relaunch")
     tap("Открыть мысль:", contains=True)
     find("Исходный текст")
-    find("На телефоне")
+    find("На телефоне", contains=True)
     tap("Действия с мыслью")
     find("Поделиться мыслью")
     tap("Обработать ИИ ещё раз")
